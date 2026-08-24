@@ -1,6 +1,6 @@
 {
   "name": "dsh-agent-browser",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Native DSH browser tools on agent-browser: snapshot+ref automation, batched actions, live viewport panel. One-line install: dsh plugin --profile web add dsh-agent-browser",
   "license": "MIT",
   "type": "module",

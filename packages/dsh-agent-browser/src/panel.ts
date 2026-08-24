@@ -93,6 +93,67 @@ export function mountPanel(
     },
   });
 
+  // Browser-tab management for the panel's tab strip: HUMAN-initiated only
+  // (sidebar/pop-out controls), never model-callable — the model has its own
+  // browser_tabs tool. GET lists the session's tabs; POST switches, opens,
+  // or closes one and returns the fresh list.
+  const disposeTabStrip = webServer.register({
+    kind: "exact",
+    path: "/browser/tabs",
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
+      const session = url.searchParams.get("session") ?? undefined;
+      if (req.method === "GET") {
+        try {
+          const tabs = await registry.session(session).tabs();
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: true, tabs }));
+        } catch (err) {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String((err as Error)?.message ?? err), tabs: [] }));
+        }
+        return;
+      }
+      if (req.method !== "POST") {
+        res.writeHead(405).end();
+        return;
+      }
+      let body = "";
+      for await (const chunk of req) body += String(chunk);
+      try {
+        const parsed = JSON.parse(body || "{}") as {
+          session?: string | null;
+          action?: "switch" | "new" | "close";
+          tab?: string;
+          url?: string;
+          label?: string;
+        };
+        const sess = registry.session(parsed.session ?? undefined);
+        switch (parsed.action) {
+          case "switch":
+            if (!parsed.tab) throw new Error("switch requires tab");
+            await sess.tabSwitch(parsed.tab);
+            break;
+          case "close":
+            if (!parsed.tab) throw new Error("close requires tab");
+            await sess.tabClose(parsed.tab);
+            break;
+          case "new":
+            await sess.tabNew(parsed.url, parsed.label);
+            break;
+          default:
+            throw new Error(`unknown action ${String(parsed.action)}`);
+        }
+        const tabs = await sess.tabs();
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, tabs }));
+      } catch (err) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: String((err as Error)?.message ?? err), tabs: [] }));
+      }
+    },
+  });
+
   // Pop-out tab: a standalone same-origin viewer page.
   const disposeViewer = webServer.register({
     kind: "exact",
@@ -220,6 +281,7 @@ export function mountPanel(
   const dispose = () => {
     disposeViewer();
     disposeInventory();
+    disposeTabStrip();
     disposeTakeover();
     disposeUpgrade();
     for (const ws of upstreams) {
@@ -249,6 +311,16 @@ function viewerHtml(): string {
 <style>
   body { margin: 0; background: #141416; color: #ddd; font: 12px system-ui; display: flex; flex-direction: column; height: 100vh; }
   header { padding: 6px 10px; display: flex; gap: 8px; align-items: center; border-bottom: 1px solid #2a2a2e; }
+  #tabstrip { display: none; gap: 4px; align-items: center; padding: 4px 10px; border-bottom: 1px solid #2a2a2e; overflow-x: auto; }
+  .btab { display: inline-flex; align-items: center; gap: 4px; max-width: 160px; padding: 2px 6px; font-size: 11px;
+          border-radius: 6px; cursor: pointer; white-space: nowrap; color: inherit; background: transparent;
+          border: 1px solid transparent; }
+  .btab.active { background: #26262b; border-color: #444; }
+  .btab span { overflow: hidden; text-overflow: ellipsis; }
+  .btab button { all: unset; cursor: pointer; opacity: .6; padding: 0 3px; }
+  .btab button:hover { opacity: 1; }
+  #newtab { all: unset; cursor: pointer; padding: 0 6px; font-size: 13px; opacity: .7; }
+  #newtab:hover { opacity: 1; }
   canvas { width: 100%; height: auto; background: #111; flex: 1; object-fit: contain; }
   main { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
   #status { opacity: .7; }
@@ -256,15 +328,78 @@ function viewerHtml(): string {
 </head>
 <body>
 <header><strong>Browser live view</strong><span id="status">connecting…</span></header>
+<div id="tabstrip"></div>
 <main><canvas id="view" width="1280" height="720"></canvas></main>
 <script>
 (() => {
   const params = new URLSearchParams(location.search);
   const status = document.getElementById("status");
   const canvas = document.getElementById("view");
+  const strip = document.getElementById("tabstrip");
   const p = new URLSearchParams({ maxFps: "24", pacing: "ack" });
   const session = params.get("session");
   if (session) p.set("session", session);
+
+  // ── browser tab strip (human-driven; same-origin /browser/tabs routes) ──
+  const normTabs = (raw) => {
+    const list = Array.isArray(raw) ? raw : Array.isArray(raw && raw.tabs) ? raw.tabs : [];
+    return list.slice(0, 16).map((t, i) => ({
+      id: String((t && (t.tabId ?? t.id ?? t.targetId)) ?? "t" + (i + 1)),
+      title: typeof (t && t.title) === "string" ? t.title : "",
+      url: typeof (t && t.url) === "string" ? t.url : "",
+      active: Boolean(t && t.active),
+    }));
+  };
+  const renderTabs = (tabs) => {
+    if (!strip) return;
+    if (!tabs || tabs.length === 0) { strip.style.display = "none"; strip.textContent = ""; return; }
+    strip.style.display = "flex";
+    strip.textContent = "";
+    for (const t of tabs) {
+      const chip = document.createElement("span");
+      chip.className = "btab" + (t.active ? " active" : "");
+      chip.title = t.title ? t.title + "\n" + t.url : t.url;
+      const label = document.createElement("span");
+      label.textContent = t.title || t.url || t.id;
+      chip.append(label);
+      if (t.active) {
+        chip.onclick = null;
+      } else {
+        chip.onclick = () => postTab({ action: "switch", tab: t.id });
+        const close = document.createElement("button");
+        close.textContent = "\u00d7";
+        close.title = "Close tab " + t.id;
+        close.onclick = (ev) => { ev.stopPropagation(); postTab({ action: "close", tab: t.id }); };
+        chip.append(close);
+      }
+      strip.append(chip);
+    }
+    const plus = document.createElement("button");
+    plus.id = "newtab";
+    plus.textContent = "+";
+    plus.title = "New tab (about:blank)";
+    plus.onclick = () => postTab({ action: "new" });
+    strip.append(plus);
+  };
+  const postTab = async (body) => {
+    try {
+      const res = await fetch("/browser/tabs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session, ...body }),
+      });
+      if (res.ok) renderTabs(normTabs((await res.json()).tabs));
+    } catch {}
+  };
+  const refreshTabs = async () => {
+    try {
+      const q = session ? "?session=" + encodeURIComponent(session) : "";
+      const res = await fetch("/browser/tabs" + q, { headers: { accept: "application/json" } });
+      if (res.ok) renderTabs(normTabs((await res.json()).tabs));
+    } catch {}
+  };
+  void refreshTabs();
+  setInterval(refreshTabs, 5000);
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   let bitmap = null;
   let ageMs = null;
@@ -278,6 +413,7 @@ function viewerHtml(): string {
     if (typeof ev.data !== "string") return;
     try {
       const msg = JSON.parse(ev.data);
+      if (msg.type === "tabs") { renderTabs(normTabs(msg.tabs)); return; }
       if (msg.type !== "frame") return;
       const bytes = Uint8Array.from(atob(msg.data), (c) => c.charCodeAt(0));
       const next = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));

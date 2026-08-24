@@ -4,8 +4,12 @@ import { mountPanel, type PanelConfig } from "../src/panel.ts";
 import { SessionRegistry } from "dsh-agent-browser-core";
 
 /** Minimal request/response doubles for route-level tests (no sockets). */
-function fakeReq(url: string, headers: Record<string, string> = {}): IncomingMessage {
-  return { url, headers } as unknown as IncomingMessage;
+function fakeReq(
+  url: string,
+  headers: Record<string, string> = {},
+  method: string | undefined = "GET",
+): IncomingMessage {
+  return { url, headers, method } as unknown as IncomingMessage;
 }
 
 function captureRes(): { res: ServerResponse; status: () => number; body: () => string; type: () => string } {
@@ -63,6 +67,7 @@ describe("panel server half", () => {
     const dispose = mountPanel({}, ws as never, registry, CONFIG);
     expect(ws.routes.map((r) => r.path).sort()).toEqual([
       "/browser/sessions",
+      "/browser/tabs",
       "/browser/takeover",
       "/browser/viewer",
     ]);
@@ -155,6 +160,86 @@ describe("panel server half", () => {
     const payload = JSON.parse(captured.body()) as { sessions: Array<{ name: string | null; takeover?: boolean }> };
     expect(payload.sessions[0]).toMatchObject({ name: "t1", takeover: false });
     registry.forget("t1");
+  });
+
+  describe("tab-strip route (/browser/tabs)", () => {
+    const MOCK = new URL("../../dsh-agent-browser-core/test/fixtures/mock-agent-browser.mjs", import.meta.url).pathname;
+    const post = (route: RegisteredRoute, body: string): IncomingMessage => {
+      const rq = fakeReq("/browser/tabs") as IncomingMessage & { method?: string };
+      rq.method = "POST";
+      (rq as unknown as { [Symbol.asyncIterator](): AsyncIterableIterator<string> })[Symbol.asyncIterator] =
+        async function* () {
+          yield body;
+        } as never;
+      return rq;
+    };
+
+    it("GET lists the session's tabs as JSON", async () => {
+      const ws = fakeWebServer();
+      const registry = new SessionRegistry({ binaryPath: MOCK });
+      registry.session("strip-a");
+      mountPanel({}, ws as never, registry, CONFIG);
+      const route = ws.routes.find((r) => r.path === "/browser/tabs")!;
+      const captured = captureRes();
+      await route.handler(fakeReq("/browser/tabs?session=strip-a"), captured.res);
+      expect(captured.status()).toBe(200);
+      expect(captured.type()).toBe("application/json");
+      const payload = JSON.parse(captured.body()) as {
+        ok: boolean;
+        tabs: Array<{ tabId: string; active: boolean; url: string }>;
+      };
+      expect(payload.ok).toBe(true);
+      expect(payload.tabs).toHaveLength(1);
+      expect(payload.tabs[0]).toMatchObject({ tabId: "t1", active: true });
+      registry.forget("strip-a");
+    });
+
+    it("POST switch performs the switch and returns the fresh list", async () => {
+      const ws = fakeWebServer();
+      const registry = new SessionRegistry({ binaryPath: MOCK });
+      registry.session("strip-b");
+      mountPanel({}, ws as never, registry, CONFIG);
+      const route = ws.routes.find((r) => r.path === "/browser/tabs")!;
+      const captured = captureRes();
+      await route.handler(post(route, JSON.stringify({ session: "strip-b", action: "switch", tab: "t1" })), captured.res);
+      const payload = JSON.parse(captured.body()) as { ok: boolean; tabs: unknown[] };
+      expect(payload.ok).toBe(true);
+      expect(payload.tabs).toHaveLength(1);
+      registry.forget("strip-b");
+    });
+
+    it("POST with an unknown action reports ok:false without throwing", async () => {
+      const ws = fakeWebServer();
+      mountPanel({}, ws as never, new SessionRegistry({ binaryPath: MOCK }), CONFIG);
+      const route = ws.routes.find((r) => r.path === "/browser/tabs")!;
+      const captured = captureRes();
+      await route.handler(post(route, JSON.stringify({ action: "reorder" })), captured.res);
+      expect(captured.status()).toBe(200);
+      const payload = JSON.parse(captured.body()) as { ok: boolean; error?: string; tabs: unknown[] };
+      expect(payload.ok).toBe(false);
+      expect(payload.error).toContain("unknown action");
+      expect(payload.tabs).toEqual([]);
+    });
+
+    it("rejects methods other than GET/POST", async () => {
+      const ws = fakeWebServer();
+      mountPanel({}, ws as never, new SessionRegistry(), CONFIG);
+      const route = ws.routes.find((r) => r.path === "/browser/tabs")!;
+      const captured = captureRes();
+      await route.handler(fakeReq("/browser/tabs", {}, "DELETE"), captured.res);
+      expect(captured.status()).toBe(405);
+    });
+
+    it("viewer page keeps same-origin-only markup after the strip additions", async () => {
+      const ws = fakeWebServer();
+      mountPanel({}, ws as never, new SessionRegistry(), CONFIG);
+      const route = ws.routes.find((r) => r.path === "/browser/viewer")!;
+      const captured = captureRes();
+      await route.handler(fakeReq("/browser/viewer"), captured.res);
+      const html = captured.body();
+      expect(html).toContain("/browser/tabs");
+      expect(html).not.toMatch(/https?:\/\//);
+    });
   });
 
   it("serves the pop-out viewer page with same-origin-only markup", async () => {

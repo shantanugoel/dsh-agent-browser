@@ -49,9 +49,20 @@ pi install npm:dsh-agent-browser-pi
 ```
 
 Then just ask the agent to use the browser ("open example.com and read the
-heading"). The panel appears automatically when a session is live; humans can
-pop it out or hold takeover to drive the page themselves. `browser_eval` stays
-approval-gated unless the operator sets `allowEval: true`.
+heading"). The panel appears automatically when a session is live, in any of
+three display modes (remembered per browser):
+
+- **chip** — collapsed launcher button, bottom-right.
+- **float** — the original small floating card.
+- **sidebar** — Codex-style right sidebar: docked full-height, drag-resizable;
+  the app's columns reflow around it (it reserves real layout space instead of
+  covering the conversation), with a tab strip where every live session gets its
+  own tab, and beneath it a
+  strip of the active session's *browser* tabs (click to switch, `×` to close,
+  `+` to open). Humans can also pop the view out to its own window or hold
+  takeover to drive the page themselves.
+
+`browser_eval` stays approval-gated unless the operator sets `allowEval: true`.
 
 ## Live-profile installation — awaiting operator go-ahead
 
@@ -238,6 +249,27 @@ no manual config edits. Config afterwards is optional via
   open(example.com) → snapshot finds `e2` → act(click @e2) returns step outcome plus the
   compact post-action tree (`page`). Stale-ref attempts fail cleanly
   (`failedCount: 1`, no snapshot) exactly as designed.
+- Sidebar mode shipped: the panel now has chip / float / **sidebar** display
+  modes (persisted in localStorage). The sidebar docks full-height on the right,
+  drag-resizes via its left edge, carries a session tab strip (one tab per live
+  session, Codex-style) and a browser-tab strip for the active session backed by
+  the new human-only `GET/POST /browser/tabs` routes (list/switch/close/new over
+  the session facade — never model-callable; the model keeps its own
+  `browser_tabs`). Tab lists also refresh live from the daemon's stream `tabs`
+  messages; the pop-out viewer page gained the same strip. Auto-open now fires
+  at most once per page load so an explicit close sticks. Sidebar reflow: the
+  panel pads the AppFrame's right edge so the conversation column resizes
+  instead of being covered. Frame lookup climbs from the panel root to the
+  overlay layer's `data-shell-overlay` attribute and steps out one level — the
+  naive parentElement chain stops at the slot renderer's display:contents
+  anchor / the out-of-flow layer itself, whose padding cannot reflow anything
+  (found live). Degrades to plain overlay behavior if the structure moves.
+  Click-through fix: the collapsed chip keeps
+  `pointer-events:none` on its root (so it never blocks the app), but the pill,
+  action buttons, tab strips, and resize handle now opt back in explicitly —
+  previously the inherited none made the launcher pill dead once the once-only
+  auto-open stopped re-forcing the panel open every poll. 6 route/viewer tests
+  added (19 adapter + 45 core green).
 - M3 gates: `browser_eval` fails closed unless `allowEval: true`; otherwise it routes
   through the host's interactive approval seam (`ctx.approval.request`) and permits
   only an explicit `allowed-once`. Human takeover is config-gated
