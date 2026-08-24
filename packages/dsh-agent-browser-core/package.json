@@ -1,0 +1,52 @@
+{
+  "name": "dsh-agent-browser-core",
+  "version": "0.1.0",
+  "description": "Host-agnostic TypeScript driver over the agent-browser CLI/JSON daemon protocol: daemon lifecycle, typed batch calls, refs, sessions, live viewport streams.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "agent-browser": "0.34.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm build && pnpm test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shantanugoel/dsh-agent-browser.git",
+    "directory": "packages/dsh-agent-browser-core"
+  },
+  "bugs": {
+    "url": "https://github.com/shantanugoel/dsh-browser-control/issues"
+  },
+  "homepage": "https://github.com/shantanugoel/dsh-browser-control#readme",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "agent-browser",
+    "browser-automation",
+    "driver"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

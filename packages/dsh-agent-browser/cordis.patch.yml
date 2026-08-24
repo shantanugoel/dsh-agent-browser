@@ -1,0 +1,20 @@
+# The dsh-agent-browser bundle patch. Applied as ONE insert over the profile
+# root when the package is installed via `dsh plugin --profile <name> add
+# dsh-agent-browser`; the reconciler appends this package to dsh.profile.bundles.
+#
+# Config overrides belong in the user's cordis.patch.yml (last write wins per
+# row id), e.g.:
+#   - id: browser
+#     config:
+#       defaultTimeoutMs: 90000
+
+- insert:
+    - id: browser
+      name: dsh-agent-browser
+      inject: [webServer]
+      config:
+        autoOpenPanel: true
+        idleTimeoutMinutes: 15
+        defaultTimeoutMs: 60000
+        headless: true
+        cookiesRedacted: true

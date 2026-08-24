@@ -1,0 +1,11 @@
+node_modules/
+dist/
+lib/
+*.tsbuildinfo
+.scratch/
+coverage/
+.pnpm-store/
+*.tgz
+.DS_Store
+.env
+.env.*

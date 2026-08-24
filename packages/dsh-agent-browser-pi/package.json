@@ -1,0 +1,42 @@
+{
+  "name": "dsh-agent-browser-pi",
+  "version": "0.1.0",
+  "description": "pi extension: the dsh-agent-browser tool surface (snapshot+ref browser automation over agent-browser) for pi sessions. Viewing via agent-browser's own dashboard URL.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./extensions/browser.ts",
+  "files": [
+    "extensions"
+  ],
+  "dependencies": {
+    "dsh-agent-browser-core": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "exit 0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shantanugoel/dsh-agent-browser.git",
+    "directory": "packages/dsh-agent-browser-pi"
+  },
+  "bugs": {
+    "url": "https://github.com/shantanugoel/dsh-browser-control/issues"
+  },
+  "homepage": "https://github.com/shantanugoel/dsh-browser-control#readme",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "agent-browser",
+    "browser-automation",
+    "pi-extension"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@dsh-community/browser-tooling",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@11.23.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shantanugoel/dsh-agent-browser.git"
+  }
+}

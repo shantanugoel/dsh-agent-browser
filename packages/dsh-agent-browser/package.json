@@ -1,0 +1,81 @@
+{
+  "name": "dsh-agent-browser",
+  "version": "0.1.0",
+  "description": "Native DSH browser tools on agent-browser: snapshot+ref automation, batched actions, live viewport panel. One-line install: dsh plugin --profile web add dsh-agent-browser",
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json",
+    "./client": {
+      "types": "./client/index.d.ts",
+      "default": "./client/dist/client.js"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "client/index.d.ts",
+    "client/dist/client.js"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "slots"
+      ],
+      "platform": "web"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.1",
+    "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
+    "dsh-agent-browser-core": "workspace:*",
+    "ws": "^8.18.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/build-client.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm build && pnpm test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.0",
+    "@deepseek-ai/cordis": "4.0.1",
+    "esbuild": "^0.28.2",
+    "@types/react": "^19",
+    "react": "^19"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shantanugoel/dsh-agent-browser.git",
+    "directory": "packages/dsh-agent-browser"
+  },
+  "bugs": {
+    "url": "https://github.com/shantanugoel/dsh-browser-control/issues"
+  },
+  "homepage": "https://github.com/shantanugoel/dsh-browser-control#readme",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "agent-browser",
+    "browser-automation",
+    "plugin",
+    "bundle"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
