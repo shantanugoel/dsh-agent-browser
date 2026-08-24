@@ -277,6 +277,22 @@ no manual config edits. Config afterwards is optional via
   (`POST /browser/takeover`), never model-callable; WS input forwarding requires
   input=1 AND the per-session held flag. The panel viewer shows a live activity
   feed (console/url lines) under the canvas.
+- v0.2.1 hardening (from a GUI-interaction audit that also exonerated the plugin
+  on a reported "session add buttons stop working" incident — reproduced healthy
+  across 0.1.2/0.2.0, vanilla/full stacks, chip/sidebar modes, real clicks):
+  - `defaultTimeoutMs` is now REAL (was accepted-but-ignored): scales every
+    per-op budget (nav 1.5×, snapshot/shot 1×, act 3×, read 0.75×, eval 0.5×)
+    and flows into the driver as its default call timeout. Dead `headless`
+    patch key removed (`headed` is the actual toggle).
+  - CSRF fence: `/browser/tabs` + `/browser/takeover` POSTs now reject
+    cross-site Origins (browsers attach Origin even no-cors; bodies parse as
+    JSON regardless of content-type). Missing Origin (curl) still passes.
+  - `ctx.tools.register` is no longer monkey-patched for call counting — our
+    own definitions are wrapped before registration instead.
+  - Takeover-held state moved off module scope into each panel mount and
+    auto-clears when the registry emits `closed` (stop tool / reaper).
+  - Sidebar padding tracks exactly the node IT padded (no stranded gutters);
+    inventory polling pauses while the tab is hidden.
 
 ## Install lifecycle — verified end-to-end in an isolated DSH_HOME
 

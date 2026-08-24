@@ -48,6 +48,17 @@ function originAllowed(req: IncomingMessage, selfHost: string): boolean {
 }
 
 /**
+ * CSRF fence for STATE-CHANGING requests. Browsers attach an Origin header to
+ * cross-site POSTs even under no-cors, and a text/plain body still parses as
+ * JSON here — so without this check a hostile webpage could drive a live
+ * daemon's tabs from the operator's browser. Requests WITHOUT Origin
+ * (curl, same-process callers) pass; loopback binding stays the outer gate.
+ */
+function writeAllowed(req: IncomingMessage): boolean {
+  return originAllowed(req, req.headers.host ?? "");
+}
+
+/**
  * Mount the panel's HTTP + upgrade routes onto the host web server.
  * @returns disposer removing both routes and closing live proxies.
  */
@@ -60,6 +71,18 @@ export function mountPanel(
   const wss = new WebSocketServer({ noServer: true });
   const upstreams = new Set<WsSocket>();
 
+  // Sessions with human takeover currently held (input forwarding allowed).
+  // Scoped to THIS mount (not module-global) and self-cleaning: whenever the
+  // registry reports a session closed — explicit stop, stopAll, or the idle
+  // reaper — its held flag drops so a respawned daemon starts read-only.
+  const takeoverHeld = new Set<string>();
+  const onRegistryEvent = (event: { type?: string; name?: string | null }) => {
+    if (event.type !== "closed") return;
+    if (typeof event.name === "string" && event.name.length > 0) takeoverHeld.delete(event.name);
+    else takeoverHeld.delete("__default__");
+  };
+  const disposeRegistryListener = registry.on?.(onRegistryEvent);
+
   // Human-takeover toggle: HUMAN-initiated only (panel button / pop-out), never
   // model-callable; gated on the static config switch.
   const disposeTakeover = webServer.register({
@@ -68,6 +91,11 @@ export function mountPanel(
     handler: async (req, res) => {
       if (req.method !== "POST") {
         res.writeHead(405).end();
+        return;
+      }
+      if (!writeAllowed(req)) {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "cross-site write rejected" }));
         return;
       }
       let body = "";
@@ -116,6 +144,11 @@ export function mountPanel(
       }
       if (req.method !== "POST") {
         res.writeHead(405).end();
+        return;
+      }
+      if (!writeAllowed(req)) {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "cross-site write rejected", tabs: [] }));
         return;
       }
       let body = "";
@@ -284,6 +317,7 @@ export function mountPanel(
     disposeTabStrip();
     disposeTakeover();
     disposeUpgrade();
+    disposeRegistryListener?.();
     for (const ws of upstreams) {
       try {
         ws.close();

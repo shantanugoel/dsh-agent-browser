@@ -6,10 +6,10 @@ const MOCK = new URL("../../dsh-agent-browser-core/test/fixtures/mock-agent-brow
 
 /** Build a fake ctx, apply the plugin, return the named tool. */
 function boot(config: Record<string, unknown> = {}) {
-  const tools = new Map<string, { execute: (args: never, exec: never) => Promise<unknown> }>();
+  const tools = new Map<string, { execute: (args: never, exec: never) => Promise<unknown>; timeoutMs?: number }>();
   const registryRef: { current?: SessionRegistry } = {};
   const ctx = {
-    tools: { register: (d: { name: string; execute: never }) => tools.set(d.name, d as never) },
+    tools: { register: (d: { name: string; execute: never; timeoutMs?: number }) => tools.set(d.name, d as never) },
     systemPrompt: { section: () => undefined },
     effect: (_factory: () => unknown, _label: string) => undefined,
     webServer: undefined,
@@ -17,6 +17,28 @@ function boot(config: Record<string, unknown> = {}) {
   apply(ctx as never, { binaryPath: MOCK, ...config } as never);
   return { getTool: (name: string) => tools.get(name)! };
 }
+
+describe("defaultTimeoutMs budget scaling", () => {
+  it("keeps the historical budgets at the default base (60s)", () => {
+    const { getTool } = boot();
+    expect(getTool("browser_open").timeoutMs).toBe(90_000);
+    expect(getTool("browser_snapshot").timeoutMs).toBe(60_000);
+    expect(getTool("browser_act").timeoutMs).toBe(180_000);
+    expect(getTool("browser_get").timeoutMs).toBe(45_000);
+    expect(getTool("browser_eval").timeoutMs).toBe(30_000);
+    expect(getTool("browser_screenshot").timeoutMs).toBe(60_000);
+  });
+
+  it("scales every per-operation budget from an explicit base", () => {
+    const { getTool } = boot({ defaultTimeoutMs: 10_000 });
+    expect(getTool("browser_open").timeoutMs).toBe(15_000); // nav 1.5×
+    expect(getTool("browser_snapshot").timeoutMs).toBe(10_000); // snapshot 1×
+    expect(getTool("browser_act").timeoutMs).toBe(30_000); // act 3×
+    expect(getTool("browser_get").timeoutMs).toBe(7_500); // read 0.75×
+    expect(getTool("browser_eval").timeoutMs).toBe(5_000); // eval 0.5×
+    expect(getTool("browser_screenshot").timeoutMs).toBe(10_000); // shot 1×
+  });
+});
 
 describe("browser_get cookies redaction", () => {
   it("redacts cookie values by default (cookiesRedacted: true)", async () => {

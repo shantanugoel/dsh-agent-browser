@@ -32,14 +32,14 @@ export const name = "browser";
 /** Services required at load time; webServer is read lazily so headless profiles work. */
 export const inject: string[] = ["tools", "systemPrompt"];
 
-/** Cooperative timeout budgets (ms) per operation class. */
-const TIMEOUTS = {
-  navTimeoutMs: 90_000,
-  snapshotTimeoutMs: 60_000,
-  actTimeoutMs: 180_000,
-  readTimeoutMs: 45_000,
-  evalTimeoutMs: 30_000,
-  shotTimeoutMs: 60_000,
+/** Cooperative timeout multipliers over {@link Config.defaultTimeoutMs}. */
+const TIMEOUT_SCALE = {
+  navTimeoutMs: 1.5,
+  snapshotTimeoutMs: 1,
+  actTimeoutMs: 3,
+  readTimeoutMs: 0.75,
+  evalTimeoutMs: 0.5,
+  shotTimeoutMs: 1,
 } as const;
 
 /** Plugin configuration; overrides belong in the profile cordis.patch.yml. */
@@ -48,6 +48,13 @@ export interface Config {
   autoOpenPanel?: boolean;
   /** Daemon idle timeout in minutes; the daemon exits after this much inactivity. Default 15. */
   idleTimeoutMinutes?: number;
+  /**
+   * Base RPC timeout budget in ms; the per-operation budgets below scale from
+   * it (nav 1.5×, snapshot/shot 1×, act 3×, read 0.75×, eval 0.5×). Default
+   * 60000 — which reproduces the historical fixed budgets exactly. Also
+   * inherited by every driver-level call that does not set its own timeout.
+   */
+  defaultTimeoutMs?: number;
   /** Extra Chromium launch args (comma/newline separated for YAML friendliness). */
   launchArgs?: string;
   /** Restrict navigations to these domains when non-empty. */
@@ -69,6 +76,7 @@ export const Config: z<Config> = z.object({
   idleTimeoutMinutes: z.number().default(15),
   launchArgs: z.string(),
   allowedDomains: z.array(z.string()),
+  defaultTimeoutMs: z.number().default(60_000),
   cookiesRedacted: z.boolean().default(true),
   allowEval: z.boolean().default(false),
   allowTakeover: z.boolean().default(false),
@@ -168,11 +176,24 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
   const config = {
     autoOpenPanel: true,
     idleTimeoutMinutes: 15,
+    defaultTimeoutMs: 60_000,
     cookiesRedacted: true,
     allowEval: false,
     headed: false,
     ...rawConfig,
   };
+
+  // Per-operation budgets scale from the configured base; the 60s default
+  // reproduces the historical fixed budgets exactly (90/60/180/45/30/60k).
+  const baseMs = Math.max(1_000, config.defaultTimeoutMs);
+  const TIMEOUTS = {
+    navTimeoutMs: Math.round(baseMs * TIMEOUT_SCALE.navTimeoutMs),
+    snapshotTimeoutMs: Math.round(baseMs * TIMEOUT_SCALE.snapshotTimeoutMs),
+    actTimeoutMs: Math.round(baseMs * TIMEOUT_SCALE.actTimeoutMs),
+    readTimeoutMs: Math.round(baseMs * TIMEOUT_SCALE.readTimeoutMs),
+    evalTimeoutMs: Math.round(baseMs * TIMEOUT_SCALE.evalTimeoutMs),
+    shotTimeoutMs: Math.round(baseMs * TIMEOUT_SCALE.shotTimeoutMs),
+  } as const;
 
   const launchArgs: string[] = [];
   if (config.headed) launchArgs.push("--headed");
@@ -186,6 +207,7 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
   const registry = new SessionRegistry(
     {
       ...(launchArgs.length > 0 ? { launchArgs } : {}),
+      ...(config.defaultTimeoutMs !== 60_000 ? { defaultTimeoutMs: config.defaultTimeoutMs } : {}),
     ...(rawConfig.allowedDomains && rawConfig.allowedDomains.length > 0
       ? { allowedDomains: rawConfig.allowedDomains }
       : {}),
@@ -198,23 +220,21 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
   const resolveSession = (session?: string) => (session && session.length > 0 ? session : undefined);
 
   // ── §6 instrumentation: per-tool call counts, exposed via /browser/sessions.metrics
+  // Wrapping happens on OUR definitions before registration — the shared host
+  // `ctx.tools.register` service is never mutated.
   const toolCallCounts = new Map<string, number>();
-  type CountableDef = { name: string; execute?: unknown };
-  const rawRegister = ctx.tools.register.bind(ctx.tools);
-  ctx.tools.register = ((def: CountableDef) => {
-    if (
-      typeof def?.name === "string" &&
-      def.name.startsWith("browser_") &&
-      typeof def.execute === "function"
-    ) {
-      const orig = def.execute as (a: never, e: never) => Promise<unknown>;
-      def.execute = (async (a: never, e: never) => {
-        toolCallCounts.set(def.name!, (toolCallCounts.get(def.name!) ?? 0) + 1);
+  type CountableDef = { name?: string; execute?: unknown };
+  const registerBrowserTool = <T>(def: T): void => {
+    const d = def as CountableDef;
+    if (typeof d.name === "string" && typeof d.execute === "function") {
+      const orig = d.execute as (a: never, e: never) => Promise<unknown>;
+      d.execute = (async (a: never, e: never) => {
+        toolCallCounts.set(d.name!, (toolCallCounts.get(d.name!) ?? 0) + 1);
         return orig(a, e);
-      }) as unknown as typeof def.execute;
+      }) as unknown as typeof d.execute;
     }
-    return rawRegister(def as never);
-  }) as typeof ctx.tools.register;
+    ctx.tools.register(def as never);
+  };
 
   // ── §4 allowlist approvals: off-list domains require a host-side grant
   const approvedOffList = new Set<string>();
@@ -276,8 +296,7 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
   });
 
   // ── browser_open ──────────────────────────────────────────────────────
-  ctx.tools.register(
-    defineTool({
+  registerBrowserTool(defineTool({
       name: "browser_open",
       description:
         "Navigate the managed browser to a URL and return the loaded page's title and URL. Launches the shared daemon on first use.",
@@ -336,8 +355,7 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
   );
 
   // ── browser_snapshot ────────────────────────────────────────────────────
-  ctx.tools.register(
-    defineTool({
+  registerBrowserTool(defineTool({
       name: "browser_snapshot",
       description:
         "Capture the current page as a compact accessibility tree with @ref element ids you can pass to browser_act. Refs go stale after any page change — snapshot again after navigation or clicks.",
@@ -388,8 +406,7 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
   );
 
   // ── browser_find ──────────────────────────────────────────────────────
-  ctx.tools.register(
-    defineTool({
+  registerBrowserTool(defineTool({
       name: "browser_find",
       description:
         "Find interactive elements matching text or a regular expression, with their @refs and roles. Cheaper than a full snapshot when you know what you are looking for.",
@@ -454,8 +471,7 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
   );
 
   // ── browser_act ───────────────────────────────────────────────────────
-  ctx.tools.register(
-    defineTool({
+  registerBrowserTool(defineTool({
       name: "browser_act",
       description:
         "Run multiple interactions (click/fill/type/press/select/scroll/upload…) in ONE batched call using @refs from the latest snapshot. Steps run in order; results report each step. Re-snapshot afterwards — refs change when the page changes.",
@@ -567,8 +583,7 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
   );
 
   // ── browser_get ───────────────────────────────────────────────────────
-  ctx.tools.register(
-    defineTool({
+  registerBrowserTool(defineTool({
       name: "browser_get",
       description:
         "Read page information: URL, title, element text/value/html by ref, console messages, cookies (redacted by default), or recent network requests.",
@@ -639,8 +654,7 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
   );
 
   // ── browser_eval ──────────────────────────────────────────────────────
-  ctx.tools.register(
-    defineTool({
+  registerBrowserTool(defineTool({
       name: "browser_eval",
       description:
         "Evaluate JavaScript in the page context and return the result. Escape hatch of last resort — prefer snapshot/find/get. Requires the deployment to enable it.",
@@ -707,8 +721,7 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
   );
 
   // ── browser_screenshot ──────────────────────────────────────────────────
-  ctx.tools.register(
-    defineTool({
+  registerBrowserTool(defineTool({
       name: "browser_screenshot",
       description:
         "Capture the viewport (or full page) as a PNG saved to disk. Returns the absolute path; treat screenshots as sensitive user content.",
@@ -750,8 +763,7 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
   );
 
   // ── browser_tabs ──────────────────────────────────────────────────────
-  ctx.tools.register(
-    defineTool({
+  registerBrowserTool(defineTool({
       name: "browser_tabs",
       description:
         "List, open, switch, or close tabs. Tab ids (t1, t2, …) are stable within a session; labels are user-assigned aliases.",
@@ -840,8 +852,7 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
   );
 
   // ── browser_session ─────────────────────────────────────────────────────
-  ctx.tools.register(
-    defineTool({
+  registerBrowserTool(defineTool({
       name: "browser_session",
       description:
         "Manage isolated browser sessions: list live daemons, close one session's browser, or stop everything. Subagents should pass distinct session names to browser_* tools to stay isolated.",

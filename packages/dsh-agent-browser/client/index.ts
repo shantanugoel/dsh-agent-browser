@@ -505,6 +505,9 @@ export function BrowserPanel() {
   useEffect(() => {
     let alive = true;
     const poll = async () => {
+      // Background tab: the panel is invisible; skip the cycle entirely
+      // (auto-open resumes on the first visible tick after return).
+      if (document.visibilityState === "hidden") return;
       const inv = await fetchInventory();
       if (!alive || inv === null) return;
       setInventory(inv);
@@ -591,6 +594,10 @@ export function BrowserPanel() {
   // step out one level to the frame grid. If the attribute ever moves, fall
   // back to a document query; worst case degrades to plain overlay behavior.
   const rootRef = useRef<HTMLDivElement | null>(null);
+  // The exact node this panel currently pads. Re-checking ownership every run
+  // means a changed lookup result can never strand padding on a stale node,
+  // and cleanup always clears precisely what THIS panel set.
+  const paddedRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     let layer: HTMLElement | null = rootRef.current?.parentElement ?? null;
     while (layer && !layer.hasAttribute("data-shell-overlay")) layer = layer.parentElement;
@@ -598,11 +605,18 @@ export function BrowserPanel() {
       layer?.parentElement ??
       document.querySelector<HTMLElement>("[data-shell-overlay]")?.parentElement ??
       null;
+    if (paddedRef.current && paddedRef.current !== frame) {
+      paddedRef.current.style.paddingRight = "";
+      paddedRef.current = null;
+    }
     if (!frame || frame.hasAttribute("data-shell-overlay")) return;
     if (mode === "sidebar") frame.style.paddingRight = `${effWidth}px`;
     else frame.style.paddingRight = "";
+    paddedRef.current = mode === "sidebar" ? frame : null;
     return () => {
-      frame.style.paddingRight = "";
+      if (paddedRef.current && paddedRef.current !== frame) paddedRef.current.style.paddingRight = "";
+      if (frame) frame.style.paddingRight = "";
+      paddedRef.current = null;
     };
   }, [mode, sidebarWidth]);
 

@@ -255,4 +255,104 @@ describe("panel server half", () => {
     // No external origins in the page.
     expect(html).not.toMatch(/https?:\/\//);
   });
+
+  describe("cross-site write fence", () => {
+    /** Build a POST with an explicit Origin header. */
+    const postWithOrigin = (path: string, origin: string | undefined, body: string): IncomingMessage => {
+      const rq = fakeReq(path, origin === undefined ? {} : { origin }, "POST") as IncomingMessage & {
+        method?: string;
+      };
+      rq.method = "POST";
+      (rq as unknown as { [Symbol.asyncIterator](): AsyncIterableIterator<string> })[Symbol.asyncIterator] =
+        async function* () {
+          yield body;
+        } as never;
+      return rq;
+    };
+
+    it("rejects a cross-site POST to /browser/takeover before touching state", async () => {
+      const ws = fakeWebServer();
+      mountPanel({}, ws as never, new SessionRegistry(), { ...CONFIG, takeoverEnabled: true });
+      const route = ws.routes.find((r) => r.path === "/browser/takeover")!;
+      const captured = captureRes();
+      await route.handler(
+        postWithOrigin("/browser/takeover", "https://evil.example", JSON.stringify({ session: "s", enabled: true })),
+        captured.res,
+      );
+      expect(captured.status()).toBe(403);
+      expect(JSON.parse(captured.body())).toMatchObject({ ok: false });
+    });
+
+    it("accepts a same-origin POST to /browser/takeover", async () => {
+      const ws = fakeWebServer();
+      mountPanel({}, ws as never, new SessionRegistry(), { ...CONFIG, takeoverEnabled: true });
+      const route = ws.routes.find((r) => r.path === "/browser/takeover")!;
+      const captured = captureRes();
+      // Host header matches the Origin's authority — exactly what a same-origin
+      // browser POST carries.
+      const rq = fakeReq(
+        "/browser/takeover",
+        { origin: "http://127.0.0.1:3080", host: "127.0.0.1:3080" },
+        "POST",
+      ) as IncomingMessage & { method?: string };
+      rq.method = "POST";
+      (rq as unknown as { [Symbol.asyncIterator](): AsyncIterableIterator<string> })[Symbol.asyncIterator] =
+        async function* () {
+          yield JSON.stringify({ session: "s", enabled: true });
+        } as never;
+      await route.handler(rq, captured.res);
+      expect(captured.status()).toBe(200);
+      expect(JSON.parse(captured.body())).toMatchObject({ ok: true, held: true });
+    });
+
+    it("rejects a cross-site POST to /browser/tabs", async () => {
+      const ws = fakeWebServer();
+      const registry = new SessionRegistry({
+        binaryPath: new URL("../../dsh-agent-browser-core/test/fixtures/mock-agent-browser.mjs", import.meta.url)
+          .pathname,
+      });
+      registry.session("fence");
+      mountPanel({}, ws as never, registry, CONFIG);
+      const route = ws.routes.find((r) => r.path === "/browser/tabs")!;
+      const captured = captureRes();
+      await route.handler(
+        postWithOrigin("/browser/tabs", "https://evil.example", JSON.stringify({ action: "new", url: "https://x" })),
+        captured.res,
+      );
+      expect(captured.status()).toBe(403);
+      expect(JSON.parse(captured.body())).toMatchObject({ ok: false, tabs: [] });
+      registry.forget("fence");
+    });
+  });
+
+  it("drops a held takeover flag when the session closes", async () => {
+    const ws = fakeWebServer();
+    const registry = new SessionRegistry({
+      binaryPath: new URL("../../dsh-agent-browser-core/test/fixtures/mock-agent-browser.mjs", import.meta.url)
+        .pathname,
+    });
+    registry.session("reaper-bait");
+    mountPanel({}, ws as never, registry, { ...CONFIG, takeoverEnabled: true });
+    const takeoverRoute = ws.routes.find((r) => r.path === "/browser/takeover")!;
+    const hold = captureRes();
+    const holdReq = fakeReq("/browser/takeover", {}, "POST") as IncomingMessage & { method?: string };
+    holdReq.method = "POST";
+    (holdReq as unknown as { [Symbol.asyncIterator](): AsyncIterableIterator<string> })[Symbol.asyncIterator] =
+      async function* () {
+        yield JSON.stringify({ session: "reaper-bait", enabled: true });
+      } as never;
+    await takeoverRoute.handler(holdReq, hold.res);
+    expect(JSON.parse(hold.body())).toMatchObject({ ok: true, held: true });
+
+    // Simulate any close path (stop tool, idle reaper): forget emits `closed`.
+    registry.forget("reaper-bait");
+
+    const inventoryRoute = ws.routes.find((r) => r.path === "/browser/sessions")!;
+    registry.session("reaper-bait");
+    const after = captureRes();
+    await inventoryRoute.handler(fakeReq("/browser/sessions"), after.res);
+    const payload = JSON.parse(after.body()) as { sessions: Array<{ name: string | null; takeover?: boolean }> };
+    expect(payload.sessions.find((s) => s.name === "reaper-bait")).toMatchObject({ takeover: false });
+    registry.forget("reaper-bait");
+  });
 });

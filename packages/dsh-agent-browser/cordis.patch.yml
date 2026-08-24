@@ -15,6 +15,7 @@
       config:
         autoOpenPanel: true
         idleTimeoutMinutes: 15
+        # Base RPC budget in ms; per-op budgets scale from it (nav 1.5x,
+        # snapshot/shot 1x, act 3x, read 0.75x, eval 0.5x).
         defaultTimeoutMs: 60000
-        headless: true
         cookiesRedacted: true
