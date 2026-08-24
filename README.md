@@ -12,6 +12,20 @@ automation, batched actions, and a baked-in live viewport panel. See
 
 ## Install & use
 
+> **CRITICAL — never declare `@deepseek-ai/*` as regular dependencies.** DSH
+> guarantees one module instance per host package across the whole process via
+> its `$DSH_HOME/profiles/node_modules` fallback links (see
+> `healProfilesModuleFallback` in `dsh-app-boot`). Bundling a copy inside the
+> plugin creates a second instance, and module-scoped symbols (e.g.
+> `TOOL_RUNTIME_SCHEDULER` in `dsh-tools`) stop matching across the boundary —
+> every tool dispatch then dies with
+> `Cannot read properties of undefined (reading 'prepare')`. Host packages are
+> declared as **optional peerDependencies** here and as devDependencies for
+> local builds only; at runtime they resolve through the harness's shared
+> links. This bit us on 2026-08-25: the 0.1.1 install materialized private
+> copies of `@deepseek-ai/dsh-tools` + `@deepseek-ai/schemastery` into the live
+> profile and killed all tool calls on freshly booted instances.
+>
 > **pnpm 11 build-script gate:** `agent-browser` ships a `postinstall` that
 > fixes up its bundled native binary. pnpm ≥ 10 blocks dependency lifecycle
 > scripts unless your project allows them, and `dsh plugin add` surfaces that

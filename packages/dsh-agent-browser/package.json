@@ -1,6 +1,6 @@
 {
   "name": "dsh-agent-browser",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Native DSH browser tools on agent-browser: snapshot+ref automation, batched actions, live viewport panel. One-line install: dsh plugin --profile web add dsh-agent-browser",
   "license": "MIT",
   "type": "module",
@@ -35,10 +35,16 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "3.18.1",
-    "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
     "dsh-agent-browser-core": "workspace:*",
     "ws": "^8.18.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "3.18.1",
+    "@deepseek-ai/dsh-tools": "0.1.1-rc.2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/schemastery": { "optional": true },
+    "@deepseek-ai/dsh-tools": { "optional": true }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-client.mjs",
@@ -52,6 +58,8 @@
   "devDependencies": {
     "@types/ws": "^8.18.0",
     "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/schemastery": "3.18.1",
+    "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
     "esbuild": "^0.28.2",
     "@types/react": "^19",
     "react": "^19"
