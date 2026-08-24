@@ -242,7 +242,8 @@ export class AgentBrowserClient {
     } catch (err) {
       if (err instanceof CallTimeoutError) throw err;
       throw new BinaryUnavailableError(
-        `failed to spawn ${this.binary().command}: ${err instanceof Error ? err.message : String(err)}`,
+        `failed to spawn ${this.binary().command}: ${err instanceof Error ? err.message : String(err)}` +
+          ` (if a pnpm install skipped this package's build scripts, see the dsh-agent-browser README's install note)`,
         { cause: err },
       );
     }
