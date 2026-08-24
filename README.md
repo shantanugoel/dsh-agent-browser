@@ -12,6 +12,21 @@ automation, batched actions, and a baked-in live viewport panel. See
 
 ## Install & use
 
+> **pnpm 11 build-script gate:** `agent-browser` ships a `postinstall` that
+> fixes up its bundled native binary. pnpm ≥ 10 blocks dependency lifecycle
+> scripts unless your project allows them, and `dsh plugin add` surfaces that
+> as a hard error (`ERR_PNPM_IGNORED_BUILDS`). One-time fix, per dsh profile:
+>
+> ```bash
+> printf '\nallowBuilds:\n  agent-browser: true\n' >> ~/.dsh/profiles/<profile>/pnpm-workspace.yaml
+> ```
+>
+> then run the `dsh plugin add` command below again. (Interactive alternative:
+> `cd ~/.dsh/profiles/<profile> && pnpm approve-builds`.) The script is
+> redundant where binaries are bundled — we verified the CLI runs fine with
+> scripts ignored — but the allowance is still required for the install to
+> succeed under default policy.
+
 ```bash
 # in any DSH profile (web GUI, TUI, headless):
 dsh plugin --profile web add npm:dsh-agent-browser
