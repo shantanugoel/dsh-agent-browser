@@ -9,9 +9,9 @@
  *   float   — the original small floating card.
  *   sidebar — Codex-style right overlay: docked full-height on the right,
  *             drag-resizable, with a SESSION tab strip (one tab per live
- *             session) and, beneath it, a BROWSER tab strip (the active
- *             session's own tabs, switchable by the human through
- *             /browser/tabs). Does not mutate AppFrame layout.
+ *             session) and, beneath it, a BROWSER tab strip. Conversation
+ *             columns that intersect the overlay get paddingRight so text
+ *             and the composer aren't covered; AppFrame itself is not padded.
  *
  * The panel talks ONLY to its own origin: GET /browser/sessions for the
  * inventory, WS /browser/stream?session=… for frames, GET/POST /browser/tabs
@@ -584,11 +584,64 @@ export function BrowserPanel() {
     [sidebarWidth],
   );
 
-  // Overlay only: never write AppFrame padding. The host measures border-box
-  // width for its column solver; mutating padding made it lie and clipped the
-  // conversation/details columns. Sidebar mode covers the right edge (what
-  // shell.overlay is for) instead of reflowing the grid.
+  // Inset overlapping columns instead of padding AppFrame. The host measures
+  // the frame's border-box for its column solver; padding the frame made that
+  // number lie. Overlay stays full-bleed; center/details that sit under the
+  // sidebar get paddingRight so chat/composer reflow beside it.
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const paddedRef = useRef<Array<{ el: HTMLElement; paddingRight: string; boxSizing: string }>>([]);
+
+  useEffect(() => {
+    const overlay = ((): HTMLElement | null => {
+      let node: HTMLElement | null = rootRef.current?.parentElement ?? null;
+      while (node && !node.hasAttribute("data-shell-overlay")) node = node.parentElement;
+      return node ?? document.querySelector("[data-shell-overlay]");
+    })();
+    const frame = overlay?.parentElement ?? null;
+
+    const restore = () => {
+      for (const entry of paddedRef.current) {
+        entry.el.style.paddingRight = entry.paddingRight;
+        entry.el.style.boxSizing = entry.boxSizing;
+      }
+      paddedRef.current = [];
+    };
+
+    const apply = () => {
+      restore();
+      if (mode !== "sidebar" || !frame || !overlay) return;
+      const width = Math.min(Math.max(sidebarWidth, 280), Math.max(280, window.innerWidth - 60));
+      const coverLeft = frame.getBoundingClientRect().right - width;
+      const next: Array<{ el: HTMLElement; paddingRight: string; boxSizing: string }> = [];
+      for (const child of Array.from(frame.children) as HTMLElement[]) {
+        if (child === overlay || child.hasAttribute("data-shell-overlay")) continue;
+        if (getComputedStyle(child).position === "absolute") continue;
+        const box = child.getBoundingClientRect();
+        if (box.width < 8) continue;
+        const overlap = box.right - coverLeft;
+        if (overlap <= 1) continue;
+        next.push({
+          el: child,
+          paddingRight: child.style.paddingRight,
+          boxSizing: child.style.boxSizing,
+        });
+        child.style.boxSizing = "border-box";
+        child.style.paddingRight = Math.round(overlap) + "px";
+      }
+      paddedRef.current = next;
+    };
+
+    apply();
+    if (!frame) return restore;
+    const observer = new ResizeObserver(() => apply());
+    observer.observe(frame);
+    window.addEventListener("resize", apply);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", apply);
+      restore();
+    };
+  }, [mode, sidebarWidth]);
 
   // Effective width: never wider than the viewport allows (a width saved from
   // a larger window must not overflow after a window resize).
@@ -607,8 +660,8 @@ export function BrowserPanel() {
     mode === "sidebar"
       ? {
           ...containerBase,
-          // Absolute within the shell's overlay layer (which spans the frame):
-          // sits exactly over the gutter reserved via the frame's padding.
+          // Absolute within the shell's overlay layer (which spans the frame).
+          // Center/details columns are inset by the effect above so chat isn't covered.
           position: "absolute",
           top: 0,
           bottom: 0,

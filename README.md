@@ -298,6 +298,8 @@ no manual config edits. Config afterwards is optional via
   mutation removed; daemons scoped under `$DSH_HOME/agent-browser`; domain
   allowlist actually gates `browser_open` / `browser_tabs new`; abort signals
   forwarded; `inject: [webServer]` dropped so headless still gets the tools.
+- v0.2.3: sidebar mode insets overlapping conversation/details columns (not
+  AppFrame) so chat and the composer stay visible; gutter tracks live resize.
 
 ## Install lifecycle — verified end-to-end in an isolated DSH_HOME
 
