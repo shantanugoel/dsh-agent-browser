@@ -74,6 +74,36 @@ describe("browser_get cookies redaction", () => {
     expect(res.result).toBeDefined();
   });
 
+  it("browser_open denies off-list domains without approval", async () => {
+    const { getTool } = boot({ allowedDomains: ["example.com"] });
+    await expect(
+      getTool("browser_open").execute({ url: "https://evil.test/" } as never, {} as never),
+    ).rejects.toThrow(/allowlist/);
+  });
+
+  it("browser_open allows listed domains", async () => {
+    const { getTool } = boot({ allowedDomains: ["example.com"] });
+    const res = (await getTool("browser_open").execute(
+      { url: "https://example.com/" } as never,
+      {} as never,
+    )) as { url?: string };
+    expect(res.url).toBeDefined();
+  });
+
+  it("browser_session stop drops the registry handle", async () => {
+    const { getTool } = boot();
+    await getTool("browser_snapshot").execute({} as never, {} as never);
+    const before = (await getTool("browser_session").execute({ action: "list" } as never, {} as never)) as {
+      sessions: unknown[];
+    };
+    expect(before.sessions.length).toBeGreaterThan(0);
+    await getTool("browser_session").execute({ action: "stop" } as never, {} as never);
+    const after = (await getTool("browser_session").execute({ action: "list" } as never, {} as never)) as {
+      sessions: unknown[];
+    };
+    expect(after.sessions).toHaveLength(0);
+  });
+
   it("browser_eval honors an allowed-once approval", async () => {
     let asked = false;
     const tools = new Map<string, { execute: (args: never, exec: never) => Promise<unknown> }>();

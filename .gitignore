@@ -9,3 +9,5 @@ coverage/
 .DS_Store
 .env
 .env.*
+# leftover agent-browser state when HOME was unset
+undefined/

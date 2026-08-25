@@ -7,6 +7,8 @@
  * @module dsh-agent-browser-core/env
  */
 
+import path from "node:path";
+
 export interface EnvOverrides {
   /** Extra environment entries appended after scrubbing (highest precedence). */
   env?: Record<string, string>;
@@ -26,6 +28,22 @@ const DENY_PATTERNS: RegExp[] = [
 /** Whether one environment key is denied forwarding. */
 function denied(key: string): boolean {
   return DENY_PATTERNS.some((re) => re.test(key));
+}
+
+/**
+ * Isolate this host's daemons from other agent-browser users on the machine.
+ * When `DSH_HOME` is set (a DSH process), state lives under `$DSH_HOME/agent-browser`
+ * instead of `~/.agent-browser`. Returns undefined to keep the CLI default.
+ */
+export function defaultHostStateDir(
+  env: NodeJS.ProcessEnv = process.env,
+  fallback?: string,
+): string | undefined {
+  const dshHome = env["DSH_HOME"];
+  if (typeof dshHome === "string" && dshHome.length > 0) {
+    return path.join(dshHome, "agent-browser");
+  }
+  return fallback;
 }
 
 /** Build the child env from the host env plus driver-level overrides. */

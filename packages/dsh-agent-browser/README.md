@@ -63,7 +63,7 @@ Row id `browser` in your profile patch, e.g.:
 ```yaml
 - id: browser
   config:
-    headless: false
+    headed: false
     idleTimeoutMinutes: 30
     allowedDomains: ["example.com", "internal.corp"]
     autoOpenPanel: true

@@ -11,19 +11,21 @@
  * @module dsh-agent-browser-pi/browser
  */
 
+import os from "node:os";
+import path from "node:path";
 import {
-  AgentBrowserClient,
   SessionRegistry,
-  listSessions,
-  stopAllSessions,
-  stopSession,
-  type ActAction,
+  modelStepToActAction,
 } from "dsh-agent-browser-core";
 
-/** Shared registry for this extension's sessions. */
-const registry = new SessionRegistry({}, { idleTimeoutMs: 15 * 60_000 });
-
-const client = registry.client;
+/** Shared registry for this extension's sessions — isolated from DSH/CLI daemons. */
+const registry = new SessionRegistry(
+  {
+    env: { AGENT_BROWSER_STATE_DIR: path.join(os.homedir(), ".agent-browser-pi") },
+    idleTimeoutMs: 15 * 60_000,
+  },
+  { idleTimeoutMs: 15 * 60_000 },
+);
 
 const resolve = (session?: string) => (session && session.length > 0 ? session : undefined);
 
@@ -57,11 +59,7 @@ export const tools: PiTool[] = [
       required: ["url"],
     },
     async (args: { url: string; session?: string }) => {
-      const res = await client.call<{ title?: string; url?: string }>(["open", args.url], {
-        session: resolve(args.session),
-        timeoutMs: 90_000,
-      });
-      return res.data;
+      return registry.session(resolve(args.session)).open(args.url, { timeoutMs: 90_000 });
     },
   ),
   tool(
@@ -97,7 +95,7 @@ export const tools: PiTool[] = [
     },
     async (args: { steps: Array<Record<string, unknown>>; bail?: boolean; session?: string }) => {
       const s = resolve(args.session);
-      const actions = args.steps as unknown as ActAction[];
+      const actions = args.steps.map((step) => modelStepToActAction(step as never));
       return registry.session(s).act(actions, { bail: args.bail === true });
     },
   ),
@@ -122,8 +120,20 @@ export const tools: PiTool[] = [
           return sess.get("title");
         case "console":
           return sess.get("console");
-        case "cookies":
-          return sess.get("cookies");
+        case "cookies": {
+          const raw = await sess.get("cookies");
+          const redact = (list: unknown[]) =>
+            list.map((cookie) =>
+              cookie !== null && typeof cookie === "object" && !Array.isArray(cookie) && "value" in cookie
+                ? { ...(cookie as Record<string, unknown>), value: "[redacted]" }
+                : cookie,
+            );
+          if (Array.isArray(raw)) return redact(raw);
+          if (raw !== null && typeof raw === "object" && Array.isArray((raw as { cookies?: unknown }).cookies)) {
+            return { ...(raw as object), cookies: redact((raw as { cookies: unknown[] }).cookies) };
+          }
+          return raw;
+        }
       }
     },
   ),
@@ -224,12 +234,17 @@ export const tools: PiTool[] = [
     async (args: { action: "list" | "stop" | "stopAll"; session?: string }) => {
       switch (args.action) {
         case "list":
-          return listSessions(client);
+          return registry.list().map((entry) => ({
+            name: entry.name ?? null,
+            label: entry.label ?? null,
+            createdAt: entry.createdAt,
+            lastUsedAt: entry.lastUsedAt,
+          }));
         case "stop":
-          await stopSession(client, resolve(args.session));
+          await registry.closeSession(resolve(args.session));
           return { stopped: true };
         case "stopAll":
-          await stopAllSessions(client);
+          await registry.closeAll();
           return { stoppedAll: true };
       }
     },

@@ -54,9 +54,9 @@ three display modes (remembered per browser):
 
 - **chip** — collapsed launcher button, bottom-right.
 - **float** — the original small floating card.
-- **sidebar** — Codex-style right sidebar: docked full-height, drag-resizable;
-  the app's columns reflow around it (it reserves real layout space instead of
-  covering the conversation), with a tab strip where every live session gets its
+- **sidebar** — Codex-style right overlay: docked full-height, drag-resizable;
+  it covers the right edge of the frame (it does not mutate AppFrame padding),
+  with a tab strip where every live session gets its
   own tab, and beneath it a
   strip of the active session's *browser* tabs (click to switch, `×` to close,
   `+` to open). Humans can also pop the view out to its own window or hold
@@ -293,6 +293,11 @@ no manual config edits. Config afterwards is optional via
     auto-clears when the registry emits `closed` (stop tool / reaper).
   - Sidebar padding tracks exactly the node IT padded (no stranded gutters);
     inventory polling pauses while the tab is hidden.
+- v0.2.2 isolation / side-effect hardening: `close --all` no longer runs on
+  plugin dispose; GET `/browser/tabs` never boots a daemon; AppFrame padding
+  mutation removed; daemons scoped under `$DSH_HOME/agent-browser`; domain
+  allowlist actually gates `browser_open` / `browser_tabs new`; abort signals
+  forwarded; `inject: [webServer]` dropped so headless still gets the tools.
 
 ## Install lifecycle — verified end-to-end in an isolated DSH_HOME
 

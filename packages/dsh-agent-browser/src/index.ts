@@ -15,11 +15,8 @@ import z from "@deepseek-ai/schemastery";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import {
   SessionRegistry,
-  listSessions,
-  stopAllSessions,
-  stopSession,
-  type ActAction,
-  type TargetRef,
+  defaultHostStateDir,
+  modelStepToActAction,
 } from "dsh-agent-browser-core";
 import { mountPanel } from "./panel.ts";
 import { redactCookiePayload } from "./cookies.ts";
@@ -111,52 +108,6 @@ interface StepInput {
   newTab?: boolean;
 }
 
-/** Normalize a step target; ref ids may arrive with or without their @. */
-function targetOf(step: StepInput): TargetRef {
-  return {
-    ...(step.ref !== undefined ? { ref: step.ref.replace(/^@/, "") } : {}),
-    ...(step.selector !== undefined ? { selector: step.selector } : {}),
-  };
-}
-
-/** Convert one validated model step into the driver's typed action union. */
-function toActAction(step: StepInput): ActAction {
-  switch (step.action) {
-    case "click":
-      return { kind: "click", target: targetOf(step), ...(step.newTab ? { newTab: true } : {}) };
-    case "dblclick":
-      return { kind: "dblclick", target: targetOf(step) };
-    case "fill":
-      return { kind: "fill", target: targetOf(step), text: step.text ?? "" };
-    case "type":
-      return { kind: "type", target: targetOf(step), text: step.text ?? "" };
-    case "press":
-      return { kind: "press", key: step.key ?? "Enter" };
-    case "hover":
-      return { kind: "hover", target: targetOf(step) };
-    case "focus":
-      return { kind: "focus", target: targetOf(step) };
-    case "check":
-      return { kind: "check", target: targetOf(step) };
-    case "uncheck":
-      return { kind: "uncheck", target: targetOf(step) };
-    case "select":
-      return { kind: "select", target: targetOf(step), values: step.values ?? [] };
-    case "upload":
-      return { kind: "upload", target: targetOf(step), files: step.files ?? [] };
-    case "scroll":
-      return {
-        kind: "scroll",
-        direction: step.direction ?? "down",
-        ...(step.pixels !== undefined ? { pixels: step.pixels } : {}),
-      };
-    case "scrollintoview":
-      return { kind: "scrollintoview", target: targetOf(step) };
-    default:
-      throw new Error(`unknown action ${String((step as StepInput).action)}`);
-  }
-}
-
 /** Shared pending-card vocabulary; kind drives the UI icon. */
 function callCard(title: string): {
   card: "generic";
@@ -204,16 +155,20 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
     }
   }
 
+  const idleTimeoutMs = Math.max(0, Math.round((config.idleTimeoutMinutes ?? 15) * 60_000));
+  const stateDir = defaultHostStateDir();
   const registry = new SessionRegistry(
     {
       ...(launchArgs.length > 0 ? { launchArgs } : {}),
       ...(config.defaultTimeoutMs !== 60_000 ? { defaultTimeoutMs: config.defaultTimeoutMs } : {}),
-    ...(rawConfig.allowedDomains && rawConfig.allowedDomains.length > 0
-      ? { allowedDomains: rawConfig.allowedDomains }
-      : {}),
+      ...(rawConfig.allowedDomains && rawConfig.allowedDomains.length > 0
+        ? { allowedDomains: rawConfig.allowedDomains }
+        : {}),
       ...(rawConfig.binaryPath ? { binaryPath: rawConfig.binaryPath } : {}),
+      ...(idleTimeoutMs > 0 ? { idleTimeoutMs } : {}),
+      ...(stateDir ? { env: { AGENT_BROWSER_STATE_DIR: stateDir } } : {}),
     },
-    { idleTimeoutMs: Math.max(0, Math.round((config.idleTimeoutMinutes ?? 15) * 60_000)) },
+    { idleTimeoutMs },
   );
 
   const client = registry.client;
@@ -245,7 +200,11 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
       return null;
     }
   };
-  const ensureDomainAllowed = async (url: string, exec: { agent?: unknown; callId?: string; signal?: AbortSignal }) => {
+  const ensureDomainAllowed = async (
+    url: string,
+    exec: { agent?: unknown; callId?: string; signal?: AbortSignal },
+    session?: string,
+  ) => {
     if (!config.allowedDomains || config.allowedDomains.length === 0) return; // no policy → unrestricted
     const host = domainOf(url);
     if (host === null) throw new Error(`invalid URL: ${url}`);
@@ -279,9 +238,10 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
       );
     }
     approvedOffList.add(host);
-    // Takes effect for daemon (re)spawns; an already-running daemon keeps its
-    // restrictions until that session is restarted.
     registry.grantDomains([host]);
+    // The allowlist rides the child env, so an already-running daemon would
+    // still reject. Close our handle so the following navigation respawns.
+    if (registry.has(session)) await registry.closeSession(session);
   };
 
   ctx.systemPrompt.section({
@@ -327,27 +287,25 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
       },
       timeoutMs: TIMEOUTS.navTimeoutMs,
       isConcurrencySafe: () => false,
-      execute: async (args) => {
+      execute: async (args, exec) => {
         const s = resolveSession(args.session);
+        await ensureDomainAllowed(args.url, exec, s);
+        const sess = registry.session(s);
+        const signal = exec.signal;
         if (args.newTab) {
-          await client.call(["tab", "new", args.url], { session: s, timeoutMs: TIMEOUTS.navTimeoutMs });
-          const tabsRes = await client.call<{
-            tabs: Array<{ active: boolean; tabId: string; url: string; title: string }>;
-          }>(["tab", "list"], { session: s });
-          const active = tabsRes.data.tabs.find((t) => t.active);
+          await sess.tabNew(args.url, undefined, { timeoutMs: TIMEOUTS.navTimeoutMs, signal });
+          const tabs = await sess.tabs({ signal });
+          const active = tabs.find((t) => t.active);
           return {
             url: active?.url ?? args.url,
             ...(active?.title ? { title: active.title } : {}),
             ...(active ? { tabId: active.tabId } : {}),
           };
         }
-        const res = await client.call<{ title?: string; url?: string }>(["open", args.url], {
-          session: s,
-          timeoutMs: TIMEOUTS.navTimeoutMs,
-        });
+        const opened = await sess.open(args.url, { timeoutMs: TIMEOUTS.navTimeoutMs, signal });
         return {
-          ...(res.data.title !== undefined ? { title: res.data.title } : {}),
-          ...(res.data.url !== undefined ? { url: res.data.url } : { url: args.url }),
+          ...(opened.title !== undefined ? { title: opened.title } : {}),
+          ...(opened.url !== undefined ? { url: opened.url } : { url: args.url }),
         };
       },
       presentCall: (args) => callCard(`open ${args.url}`),
@@ -386,13 +344,14 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
       },
       timeoutMs: TIMEOUTS.snapshotTimeoutMs,
       isConcurrencySafe: () => true,
-      execute: async (args) => {
+      execute: async (args, exec) => {
         const s = resolveSession(args.session);
         const snap = await registry.session(s).snapshot({
           interactiveOnly: args.interactiveOnly !== false,
           ...(args.maxChars !== undefined ? { maxChars: args.maxChars } : {}),
           ...(args.depth !== undefined ? { depth: args.depth } : {}),
           ...(args.scopeSelector !== undefined ? { scopeSelector: args.scopeSelector } : {}),
+          signal: exec.signal,
         });
         return {
           origin: snap.origin ?? "",
@@ -453,10 +412,10 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
       },
       timeoutMs: TIMEOUTS.snapshotTimeoutMs,
       isConcurrencySafe: () => true,
-      execute: async (args) => {
+      execute: async (args, exec) => {
         const s = resolveSession(args.session);
         const pattern = args.regex === true ? new RegExp(args.pattern) : args.pattern;
-        const { matches, origin } = await registry.session(s).find(pattern, {});
+        const { matches, origin } = await registry.session(s).find(pattern, { signal: exec.signal });
         return {
           origin: origin ?? "",
           matches: matches.slice(0, 25).map((m) => ({
@@ -546,10 +505,13 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
       },
       timeoutMs: TIMEOUTS.actTimeoutMs,
       isConcurrencySafe: () => false,
-      execute: async (args) => {
+      execute: async (args, exec) => {
         const s = resolveSession(args.session);
-        const actions = args.steps.map(toActAction);
-        const results = await registry.session(s).act(actions, { bail: args.bail === true });
+        const actions = args.steps.map(modelStepToActAction);
+        const results = await registry.session(s).act(actions, {
+          bail: args.bail === true,
+          signal: exec.signal,
+        });
         const steps = results.map((r, i) => ({
           label: r.command.join(" ") || `step ${i}`,
           ok: r.success,
@@ -562,7 +524,11 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
         const touchesPage = args.steps.some((st) => st.action !== "scroll");
         if (touchesPage && failed < args.steps.length) {
           try {
-            const snap = await registry.session(s).snapshot({ interactiveOnly: true, maxChars: 1500 });
+            const snap = await registry.session(s).snapshot({
+              interactiveOnly: true,
+              maxChars: 1500,
+              signal: exec.signal,
+            });
             page = snap.truncated ? `${snap.text}\n…(truncated)` : snap.text;
           } catch {
             // Snapshot is best-effort; the step outcomes remain authoritative.
@@ -615,22 +581,23 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
       },
       timeoutMs: TIMEOUTS.readTimeoutMs,
       isConcurrencySafe: () => true,
-      execute: async (args) => {
+      execute: async (args, exec) => {
         const s = resolveSession(args.session);
         const sess = registry.session(s);
+        const signal = exec.signal;
         let data: unknown;
         switch (args.what) {
           case "url":
-            data = await sess.get("url");
+            data = await sess.get("url", { signal });
             break;
           case "title":
-            data = await sess.get("title");
+            data = await sess.get("title", { signal });
             break;
           case "console":
-            data = await sess.get("console");
+            data = await sess.get("console", { signal });
             break;
           case "cookies": {
-            const rawCookies = await sess.get("cookies");
+            const rawCookies = await sess.get("cookies", { signal });
             // Daemon shape varies by version: bare array OR {cookies:[...]}.
             // Redact both when the policy demands it (default).
             const redacted = config.cookiesRedacted ? redactCookiePayload(rawCookies) : undefined;
@@ -638,13 +605,15 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
             break;
           }
           case "network": {
-            const res = await client.call(["network", "requests"], { session: s });
+            const res = await client.call(["network", "requests"], { session: s, signal });
             data = res.data;
             break;
           }
           default: {
             if (!args.ref) throw new Error(`browser_get(${String(args.what)}) requires ref`);
-            data = await sess.get(args.what as "text" | "html" | "value", args.ref.replace(/^@/, ""));
+            data = await sess.get(args.what as "text" | "html" | "value", args.ref.replace(/^@/, ""), {
+              signal,
+            });
           }
         }
         return { what: args.what, data: data as never };
@@ -713,7 +682,7 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
           }
         }
         const s = resolveSession(args.session);
-        const result = await registry.session(s).evaluate(args.js);
+        const result = await registry.session(s).evaluate(args.js, { signal: exec.signal });
         return { result: result as never };
       },
       presentCall: (args) => callCard(`eval ${args.js.slice(0, 60)}`),
@@ -750,11 +719,12 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
       },
       timeoutMs: TIMEOUTS.shotTimeoutMs,
       isConcurrencySafe: () => false,
-      execute: async (args) => {
+      execute: async (args, exec) => {
         const s = resolveSession(args.session);
         const shot = await registry.session(s).screenshot({
           fullPage: args.fullPage === true,
           ...(args.outPath !== undefined ? { outPath: args.outPath } : {}),
+          signal: exec.signal,
         });
         return { path: shot.path, bytes: shot.bytes.length, sensitive: true };
       },
@@ -817,26 +787,28 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
       },
       timeoutMs: TIMEOUTS.readTimeoutMs,
       isConcurrencySafe: () => false,
-      execute: async (args) => {
+      execute: async (args, exec) => {
         const s = resolveSession(args.session);
+        const signal = exec.signal;
+        if (args.action === "new" && args.url) await ensureDomainAllowed(args.url, exec, s);
         const sess = registry.session(s);
         switch (args.action) {
           case "new":
             if (!args.url && !args.label) throw new Error("browser_tabs new needs url and/or label");
-            await sess.tabNew(args.url, args.label);
+            await sess.tabNew(args.url, args.label, { signal });
             break;
           case "switch":
             if (!args.tab) throw new Error("browser_tabs switch requires tab");
-            await sess.tabSwitch(args.tab);
+            await sess.tabSwitch(args.tab, { signal });
             break;
           case "close":
             if (!args.tab) throw new Error("browser_tabs close requires tab");
-            await sess.tabClose(args.tab);
+            await sess.tabClose(args.tab, { signal });
             break;
           case "list":
             break;
         }
-        const tabs = await sess.tabs();
+        const tabs = await sess.tabs({ signal });
         return {
           tabs: tabs.map((t) => ({
             tabId: t.tabId,
@@ -881,18 +853,23 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
       execute: async (args) => {
         switch (args.action) {
           case "list": {
-            const sessions = await listSessions(client);
+            const sessions = registry.list().map((entry) => ({
+              name: entry.name ?? null,
+              label: entry.label ?? null,
+              createdAt: entry.createdAt,
+              lastUsedAt: entry.lastUsedAt,
+            }));
             return {
               status: sessions.length === 0 ? "No live browser sessions." : `${sessions.length} live session(s).`,
               sessions: sessions as never[],
             };
           }
           case "stop": {
-            await stopSession(client, resolveSession(args.session));
+            await registry.closeSession(resolveSession(args.session));
             return { status: "Session stopped." };
           }
           case "stopAll": {
-            await stopAllSessions(client);
+            await registry.closeAll();
             return { status: "All sessions stopped." };
           }
         }
@@ -901,37 +878,51 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
     }),
   );
 
-  // Fiber-scoped teardown: closing the plugin stops tracked sessions.
+  // Fiber-scoped teardown: stop only sessions WE created, then drop the reaper.
   ctx.effect(
     () =>
       () => {
-        void stopAllSessions(client);
+        registry.dispose();
+        void registry.closeAll();
       },
     "browser: stop tracked sessions",
   );
 
-  // Lazy panel mount: only when the composition carries a web server.
-  void Promise.resolve().then(() => {
+  // Panel mounts only when webServer exists. Prefer a child fiber that waits
+  // for the service (headless never gets it — tools still work). Fall back to
+  // a same-tick read so tests and unusual hosts still register routes.
+  const panelConfig = {
+    autoOpenPanel: config.autoOpenPanel ?? true,
+    takeoverEnabled: rawConfig.allowTakeover === true,
+    maxFps: 12,
+    metrics: () => Object.fromEntries(toolCallCounts),
+  };
+  const attachPanel = (webServer: Parameters<typeof mountPanel>[1]): void => {
+    const disposePanel = mountPanel(ctx, webServer, registry, panelConfig);
+    ctx.effect(
+      () =>
+        () => {
+          disposePanel();
+        },
+      "browser: live-view proxy routes",
+    );
+  };
+  const maybeInject = (
+    ctx as unknown as {
+      inject?: (deps: string[], fn: (scoped: unknown) => void) => void;
+    }
+  ).inject;
+  if (typeof maybeInject === "function") {
+    maybeInject.call(ctx, ["webServer"], (scoped) => {
+      const webServer = (scoped as { webServer?: Parameters<typeof mountPanel>[1] }).webServer;
+      if (webServer) attachPanel(webServer);
+    });
+  } else {
     try {
       const webServer = (ctx as unknown as { webServer?: Parameters<typeof mountPanel>[1] }).webServer;
-      if (!webServer) {
-        console.error("[dsh-agent-browser] ctx.webServer missing at mount time; panel routes not registered");
-        return;
-      }
-      const disposePanel = mountPanel(ctx, webServer, registry, {
-        autoOpenPanel: config.autoOpenPanel ?? true,
-        takeoverEnabled: rawConfig.allowTakeover === true,
-        maxFps: 12,
-      });
-      ctx.effect(
-        () =>
-          () => {
-            disposePanel();
-          },
-        "browser: live-view proxy routes",
-      );
+      if (webServer) attachPanel(webServer);
     } catch {
-      // Headless profile without a web server: tools work, no panel.
+      // Headless / no web server: tools work, no panel.
     }
-  });
+  }
 }

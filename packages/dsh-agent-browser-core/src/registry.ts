@@ -114,6 +114,16 @@ export class SessionRegistry {
     return name ?? "__default__";
   }
 
+  /** True when this registry already tracks `name` (does not create or touch). */
+  has(name?: string): boolean {
+    return this.entries.has(this.keyOf(name));
+  }
+
+  /** Existing handle, or undefined — never creates a session or boots a daemon. */
+  peek(name?: string): BrowserSession | undefined {
+    return this.entries.get(this.keyOf(name))?.session;
+  }
+
   /** Get-or-create the session handle for one name. */
   session(name?: string, opts: { label?: string } = {}): BrowserSession {
     const key = this.keyOf(name);
@@ -154,6 +164,21 @@ export class SessionRegistry {
     } finally {
       this.entries.delete(this.keyOf(name));
       this.emit({ type: "closed", name });
+    }
+  }
+
+  /**
+   * Close every session THIS registry created. Does not run `close --all`
+   * (that would kill daemons owned by other hosts sharing a state dir).
+   */
+  async closeAll(): Promise<void> {
+    const names = this.list().map((entry) => entry.name);
+    for (const name of names) {
+      try {
+        await this.closeSession(name);
+      } catch {
+        this.forget(name);
+      }
     }
   }
 }

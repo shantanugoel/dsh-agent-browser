@@ -99,6 +99,20 @@ describe("SessionRegistry idle reaper", () => {
     registry.dispose();
   });
 
+  it("has/peek do not create handles; closeAll only closes tracked sessions", async () => {
+    const registry = new SessionRegistry({ binaryPath: MOCK });
+    expect(registry.has("ghost")).toBe(false);
+    expect(registry.peek("ghost")).toBeUndefined();
+    registry.session("a");
+    registry.session("b");
+    expect(registry.has("a")).toBe(true);
+    expect(registry.peek("a")).toBeDefined();
+    await registry.closeAll();
+    expect(registry.list()).toHaveLength(0);
+    expect(registry.has("a")).toBe(false);
+    registry.dispose();
+  });
+
   it("dispose stops the reaper so nothing reaps afterwards", async () => {
     const registry = new SessionRegistry(
       { binaryPath: MOCK },

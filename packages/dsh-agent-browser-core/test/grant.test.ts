@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AgentBrowserClient } from "../src/client.ts";
-import { buildChildEnv } from "../src/env.ts";
+import { buildChildEnv, defaultHostStateDir } from "../src/env.ts";
 
 const MOCK = new URL("./fixtures/mock-agent-browser.mjs", import.meta.url).pathname;
 
@@ -11,6 +11,12 @@ describe("grantAllowedDomains", () => {
     expect(client.allowedDomains).toEqual(["example.com", "internal.corp"]);
     const env = buildChildEnv(process.env, { allowedDomains: client.allowedDomains });
     expect(env["AGENT_BROWSER_ALLOWED_DOMAINS"]).toBe("example.com,internal.corp");
+  });
+
+  it("defaultHostStateDir isolates under DSH_HOME and otherwise leaves the CLI default", () => {
+    expect(defaultHostStateDir({ DSH_HOME: "/tmp/dsh-x" })).toBe("/tmp/dsh-x/agent-browser");
+    expect(defaultHostStateDir({})).toBeUndefined();
+    expect(defaultHostStateDir({}, "/fallback")).toBe("/fallback");
   });
 
   it("grants on an unrestricted client start a fresh allowlist", () => {

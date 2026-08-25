@@ -101,6 +101,7 @@ describe("panel server half", () => {
     const payload = JSON.parse(captured.body()) as { sessions: Array<{ name: string | null }> };
     expect(payload.sessions).toHaveLength(1);
     expect(payload.sessions[0]!.name).toBe("panel-test");
+    expect((payload.sessions[0] as { streamPort?: number }).streamPort).toBeUndefined();
     registry.forget("panel-test");
   });
 
@@ -173,6 +174,17 @@ describe("panel server half", () => {
         } as never;
       return rq;
     };
+
+    it("GET without a tracked session returns empty tabs and does not create one", async () => {
+      const ws = fakeWebServer();
+      const registry = new SessionRegistry({ binaryPath: MOCK });
+      mountPanel({}, ws as never, registry, CONFIG);
+      const route = ws.routes.find((r) => r.path === "/browser/tabs")!;
+      const captured = captureRes();
+      await route.handler(fakeReq("/browser/tabs?session=never-created"), captured.res);
+      expect(JSON.parse(captured.body())).toEqual({ ok: true, tabs: [] });
+      expect(registry.has("never-created")).toBe(false);
+    });
 
     it("GET lists the session's tabs as JSON", async () => {
       const ws = fakeWebServer();

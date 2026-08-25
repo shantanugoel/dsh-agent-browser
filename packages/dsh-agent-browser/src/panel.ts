@@ -28,9 +28,6 @@ export interface PanelConfig {
   maxFps?: number;
 }
 
-/** Sessions with human takeover currently held (input forwarding allowed). */
-const takeoverHeld = new Set<string>();
-
 interface WebServerLike {
   register(route: { kind: "exact" | "prefix"; path: string; handler: (req: IncomingMessage, res: import("node:http").ServerResponse) => void | Promise<void> }): () => void;
   registerUpgrade(route: { path: string; handler: (req: IncomingMessage, socket: Duplex, head: Buffer) => void | Promise<void> }): () => void;
@@ -133,7 +130,9 @@ export function mountPanel(
       const session = url.searchParams.get("session") ?? undefined;
       if (req.method === "GET") {
         try {
-          const tabs = await registry.session(session).tabs();
+          // Never get-or-create here: a stray GET must not boot Chrome.
+          const existing = registry.peek(session);
+          const tabs = existing ? await existing.tabs() : [];
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify({ ok: true, tabs }));
         } catch (err) {
@@ -204,7 +203,6 @@ export function mountPanel(
     handler: async (_req, res) => {
       const rows = [];
       for (const entry of registry.list()) {
-        const port = await resolveStreamPort(registry.client, entry.name);
         const key = entry.name ?? "__default__";
         rows.push({
           name: entry.name ?? null,
@@ -212,7 +210,6 @@ export function mountPanel(
           createdAt: entry.createdAt,
           lastUsedAt: entry.lastUsedAt,
           takeover: config.takeoverEnabled === true && takeoverHeld.has(key),
-          ...(port !== null ? { streamPort: port } : {}),
         });
       }
       res.writeHead(200, { "content-type": "application/json" });

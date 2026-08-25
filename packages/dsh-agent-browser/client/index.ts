@@ -7,11 +7,11 @@
  * Three display modes (persisted per browser in localStorage):
  *   chip    — collapsed launcher button, bottom-right (panel closed).
  *   float   — the original small floating card.
- *   sidebar — Codex-style right sidebar: docked full-height on the right,
+ *   sidebar — Codex-style right overlay: docked full-height on the right,
  *             drag-resizable, with a SESSION tab strip (one tab per live
  *             session) and, beneath it, a BROWSER tab strip (the active
  *             session's own tabs, switchable by the human through
- *             /browser/tabs).
+ *             /browser/tabs). Does not mutate AppFrame layout.
  *
  * The panel talks ONLY to its own origin: GET /browser/sessions for the
  * inventory, WS /browser/stream?session=… for frames, GET/POST /browser/tabs
@@ -584,41 +584,11 @@ export function BrowserPanel() {
     [sidebarWidth],
   );
 
-  // Reserve real layout space for the sidebar: pad the AppFrame's right edge so
-  // the grid (sidebar | center | details) reflows instead of being covered.
-  //
-  // Finding the frame: the slot renderer wraps every entry in a
-  // display:contents anchor (<div data-slot>), so a naive parentElement chain
-  // lands on the overlay LAYER — an out-of-flow element whose padding cannot
-  // reflow anything. Climb to the layer's stable data attribute instead, then
-  // step out one level to the frame grid. If the attribute ever moves, fall
-  // back to a document query; worst case degrades to plain overlay behavior.
+  // Overlay only: never write AppFrame padding. The host measures border-box
+  // width for its column solver; mutating padding made it lie and clipped the
+  // conversation/details columns. Sidebar mode covers the right edge (what
+  // shell.overlay is for) instead of reflowing the grid.
   const rootRef = useRef<HTMLDivElement | null>(null);
-  // The exact node this panel currently pads. Re-checking ownership every run
-  // means a changed lookup result can never strand padding on a stale node,
-  // and cleanup always clears precisely what THIS panel set.
-  const paddedRef = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    let layer: HTMLElement | null = rootRef.current?.parentElement ?? null;
-    while (layer && !layer.hasAttribute("data-shell-overlay")) layer = layer.parentElement;
-    const frame =
-      layer?.parentElement ??
-      document.querySelector<HTMLElement>("[data-shell-overlay]")?.parentElement ??
-      null;
-    if (paddedRef.current && paddedRef.current !== frame) {
-      paddedRef.current.style.paddingRight = "";
-      paddedRef.current = null;
-    }
-    if (!frame || frame.hasAttribute("data-shell-overlay")) return;
-    if (mode === "sidebar") frame.style.paddingRight = `${effWidth}px`;
-    else frame.style.paddingRight = "";
-    paddedRef.current = mode === "sidebar" ? frame : null;
-    return () => {
-      if (paddedRef.current && paddedRef.current !== frame) paddedRef.current.style.paddingRight = "";
-      if (frame) frame.style.paddingRight = "";
-      paddedRef.current = null;
-    };
-  }, [mode, sidebarWidth]);
 
   // Effective width: never wider than the viewport allows (a width saved from
   // a larger window must not overflow after a window resize).

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stepToArgv, type ActAction } from "../src/session.ts";
+import { stepToArgv, modelStepToActAction, type ActAction } from "../src/session.ts";
 import { BrowserSession } from "../src/session.ts";
 import { AgentBrowserClient } from "../src/client.ts";
 import { classifyFailure } from "../src/errors.ts";
@@ -24,6 +24,24 @@ describe("stepToArgv", () => {
   }
   it("rejects targets without ref/selector", () => {
     expect(() => stepToArgv({ kind: "click", target: {} })).toThrow();
+  });
+});
+
+describe("modelStepToActAction", () => {
+  it("maps DSH/pi {action,ref} steps onto ActAction", () => {
+    expect(modelStepToActAction({ action: "click", ref: "@e1", newTab: true })).toEqual({
+      kind: "click",
+      target: { ref: "e1" },
+      newTab: true,
+    });
+    expect(modelStepToActAction({ action: "fill", ref: "e2", text: "hi" })).toEqual({
+      kind: "fill",
+      target: { ref: "e2" },
+      text: "hi",
+    });
+  });
+  it("rejects unknown actions", () => {
+    expect(() => modelStepToActAction({ action: "explode" })).toThrow(/unknown action/);
   });
 });
 

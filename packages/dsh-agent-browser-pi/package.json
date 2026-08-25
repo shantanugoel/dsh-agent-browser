@@ -1,6 +1,6 @@
 {
   "name": "dsh-agent-browser-pi",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "pi extension: the dsh-agent-browser tool surface (snapshot+ref browser automation over agent-browser) for pi sessions. Viewing via agent-browser's own dashboard URL.",
   "license": "MIT",
   "type": "module",

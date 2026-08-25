@@ -69,7 +69,11 @@ export async function stopSession(client: AgentBrowserClient, session?: string):
   void res;
 }
 
-/** Close every session on the machine (explicit host-level Stop only). */
+/**
+ * Close every session in the client's state dir (`close --all`).
+ * Prefer {@link SessionRegistry.closeAll} from hosts — this is a last-resort
+ * broom for one isolated state directory, not a machine-wide kill.
+ */
 export async function stopAllSessions(client: AgentBrowserClient): Promise<void> {
   await client.call(["close", "--all"], { timeoutMs: 60_000, includeLaunchArgs: false }).catch(() => undefined);
 }
