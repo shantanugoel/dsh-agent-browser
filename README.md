@@ -300,6 +300,14 @@ no manual config edits. Config afterwards is optional via
   forwarded; `inject: [webServer]` dropped so headless still gets the tools.
 - v0.2.3: sidebar mode insets overlapping conversation/details columns (not
   AppFrame) so chat and the composer stay visible; gutter tracks live resize.
+- v0.2.4: DSH 0.2.2 compatibility. Peer/dev dependencies moved to
+  `@deepseek-ai/dsh-tools@0.2.2-rc.1`, `@deepseek-ai/schemastery@3.19.0`, and
+  `@deepseek-ai/cordis@4.1.0`; declared `engines.dsh: ^0.2.2-rc.1` (so install
+  compatibility no longer falls back to the old DSH peer ranges),
+  `dsh.manifestVersion: 1`, and client manifest `inject` package names (instead
+  of the old service name). Verified against the 0.2.2-rc.1 desktop runtime:
+  bundle composes, the client row loads from `/plugins`, and the panel mounts
+  in headless Chrome with no console errors.
 
 ## Install lifecycle — verified end-to-end in an isolated DSH_HOME
 

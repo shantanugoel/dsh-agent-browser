@@ -15,7 +15,8 @@ Part of a three-package family:
 
 ## Install
 
-Requires Node 24+, a DSH checkout with the web profile, and Chrome.
+Requires Node 24.9+, DSH 0.2.2 or newer with the web profile, and Chrome.
+Tested against DSH `0.2.2-rc.1` (host tools + web client panel).
 
 **pnpm ≥ 10 gates dependency build scripts.** `agent-browser` ships one
 (`postinstall` fixes up its bundled native binary), so first allow it in the
