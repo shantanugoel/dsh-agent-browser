@@ -14,13 +14,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Version comes from package.json's packageManager field. Passing
+      # `version` here too makes pnpm/action-setup@v4 fail with
+      # "Multiple versions of pnpm specified".
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
 
       - name: Install
