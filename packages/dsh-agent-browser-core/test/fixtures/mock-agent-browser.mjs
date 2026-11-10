@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Mock agent-browser CLI used by the driver's test-suite. Speaks the same
- * stdout JSON contract as agent-browser 0.34.0 for the subset of commands
+ * stdout JSON contract as agent-browser 0.42.0 for the subset of commands
  * the core driver issues, plus fault-injection switches via MOCK_* env vars.
  *
  * Usage (the driver spawns): node mock-agent-browser.mjs --json --session S <cmd…>
@@ -84,6 +84,7 @@ switch (cmd) {
         e3: { name: "Get Started", role: "button" },
       },
       snapshot: '- heading "Example Domain" [level=1, ref=e1]\n- link "Learn more" [ref=e2]\n- button "Get Started" [ref=e3]',
+      removedRefs: [],
       ...LIFECYCLE,
     });
     break;
@@ -128,7 +129,8 @@ switch (cmd) {
     break;
   }
   case "cookies": {
-    emit([{ name: "session", value: "redacted-by-driver", domain: "example.com" }]);
+    // 0.42 wraps the list; the driver normalizes it back to an array.
+    emit({ cookies: [{ name: "session", value: "redacted-by-driver", domain: "example.com" }] });
     break;
   }
   case "wait": {
@@ -140,7 +142,8 @@ switch (cmd) {
     break;
   }
   case "session": {
-    if (rest[0] === "list") emit({ sessions: [{ name: session ?? "default", pid: process.pid }] });
+    // 0.42 returns names as strings; 0.34 returned objects.
+    if (rest[0] === "list") emit({ sessions: [session ?? "default"] });
     else emit({});
     break;
   }

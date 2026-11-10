@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { SessionRegistry } from "../src/registry.ts";
+import { listSessions } from "../src/daemon.ts";
 import { resolveAgentBrowserBinary, BinaryUnavailableError } from "../src/binary.ts";
 import { resolveStreamPort } from "../src/stream.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -111,6 +112,13 @@ describe("SessionRegistry idle reaper", () => {
     expect(registry.list()).toHaveLength(0);
     expect(registry.has("a")).toBe(false);
     registry.dispose();
+  });
+
+  it("normalizes 0.42 string session names into object rows", async () => {
+    const reg = new SessionRegistry({ binaryPath: MOCK });
+    const rows = await listSessions(reg.client);
+    expect(rows).toEqual([{ name: "default" }]);
+    reg.dispose();
   });
 
   it("dispose stops the reaper so nothing reaps afterwards", async () => {

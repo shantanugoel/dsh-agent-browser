@@ -7,6 +7,8 @@
  * @module dsh-agent-browser-core/env
  */
 
+import { createHash } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 
 export interface EnvOverrides {
@@ -31,9 +33,11 @@ function denied(key: string): boolean {
 }
 
 /**
- * Isolate this host's daemons from other agent-browser users on the machine.
- * When `DSH_HOME` is set (a DSH process), state lives under `$DSH_HOME/agent-browser`
- * instead of `~/.agent-browser`. Returns undefined to keep the CLI default.
+ * Legacy pre-0.42 state-directory override.
+ *
+ * agent-browser 0.42 no longer reads `AGENT_BROWSER_STATE_DIR`; use
+ * {@link defaultHostEnv} to isolate a host through the supported
+ * `AGENT_BROWSER_NAMESPACE` seam instead. Kept for API compatibility.
  */
 export function defaultHostStateDir(
   env: NodeJS.ProcessEnv = process.env,
@@ -44,6 +48,40 @@ export function defaultHostStateDir(
     return path.join(dshHome, "agent-browser");
   }
   return fallback;
+}
+
+/**
+ * Build the agent-browser isolation env for this host.
+ *
+ * 0.42 derives state and sockets from `$HOME/.agent-browser`; the supported
+ * way to keep one DSH home separate from another (and from other tools) is a
+ * stable namespace under `namespaces/<name>`. The name is a short hash so it
+ * stays inside the Unix socket path limit.
+ *
+ * @param env - host environment; `DSH_HOME` selects the namespace.
+ * @param fallback - isolation key when `DSH_HOME` is absent.
+ * @returns child env overrides, or undefined for the CLI's shared default.
+ */
+export function defaultHostEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  fallback?: string,
+): Record<string, string> | undefined {
+  const dshHome = env["DSH_HOME"];
+  const key =
+    typeof dshHome === "string" && dshHome.length > 0 ? dshHome : fallback;
+  if (key === undefined || key.length === 0) return undefined;
+  const digest = createHash("sha256").update(key).digest("hex").slice(0, 12);
+  // Unix sockets cap the whole path at ~104 bytes. The default socket dir
+  // nests the pnpm/home path and the namespace, so even "default" can overflow
+  // in a long DSH_HOME. A short per-host root keeps every session name usable.
+  const socketRoot =
+    process.platform === "win32"
+      ? path.join(os.tmpdir(), `dsh-ab-${digest.slice(0, 8)}`)
+      : path.join("/tmp", `dsh-ab-${digest.slice(0, 8)}`);
+  return {
+    AGENT_BROWSER_NAMESPACE: `dsh-${digest}`,
+    AGENT_BROWSER_SOCKET_DIR: socketRoot,
+  };
 }
 
 /** Build the child env from the host env plus driver-level overrides. */

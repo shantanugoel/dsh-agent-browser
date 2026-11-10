@@ -236,7 +236,9 @@ export function mountPanel(
         const wantInput = url.searchParams.get("input") === "1" && config.takeoverEnabled === true && takeoverHeld.has(key);
         const maxFpsRaw = Number(url.searchParams.get("maxFps") ?? config.maxFps ?? 12);
         const maxFps = Math.min(Math.max(Number.isFinite(maxFpsRaw) ? maxFpsRaw : 12, 1), 60);
-        const port = await resolveStreamPort(registry.client, session);
+        const port = await resolveStreamPort(registry.client, session, {
+          socketDir: registry.client.socketDir(),
+        });
         if (port === null) {
           socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
           socket.destroy();

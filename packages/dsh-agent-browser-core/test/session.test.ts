@@ -128,4 +128,11 @@ describe("BrowserSession against the mock", () => {
     await expect(s.get("title")).resolves.toBe("Example Domain");
     await expect(s.get("text", "e2")).resolves.toEqual({ text: "Learn more" });
   });
+
+  it("get(cookies) unwraps the 0.42 { cookies: [...] } payload", async () => {
+    const s = makeSession();
+    const cookies = await s.get("cookies");
+    expect(Array.isArray(cookies)).toBe(true);
+    expect(cookies).toEqual([{ name: "session", value: "redacted-by-driver", domain: "example.com" }]);
+  });
 });

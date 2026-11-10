@@ -15,7 +15,7 @@ import z from "@deepseek-ai/schemastery";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import {
   SessionRegistry,
-  defaultHostStateDir,
+  defaultHostEnv,
   modelStepToActAction,
 } from "dsh-agent-browser-core";
 import { mountPanel } from "./panel.ts";
@@ -156,7 +156,7 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
   }
 
   const idleTimeoutMs = Math.max(0, Math.round((config.idleTimeoutMinutes ?? 15) * 60_000));
-  const stateDir = defaultHostStateDir();
+  const hostEnv = defaultHostEnv();
   const registry = new SessionRegistry(
     {
       ...(launchArgs.length > 0 ? { launchArgs } : {}),
@@ -166,7 +166,7 @@ export function apply(ctx: import("@deepseek-ai/cordis").Context, rawConfig: Con
         : {}),
       ...(rawConfig.binaryPath ? { binaryPath: rawConfig.binaryPath } : {}),
       ...(idleTimeoutMs > 0 ? { idleTimeoutMs } : {}),
-      ...(stateDir ? { env: { AGENT_BROWSER_STATE_DIR: stateDir } } : {}),
+      ...(hostEnv ? { env: hostEnv } : {}),
     },
     { idleTimeoutMs },
   );

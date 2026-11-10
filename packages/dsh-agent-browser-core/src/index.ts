@@ -2,7 +2,7 @@
 export * from "./types.ts";
 export * from "./errors.ts";
 export { resolveAgentBrowserBinary, type ResolvedBinary } from "./binary.ts";
-export { buildChildEnv, defaultHostStateDir, type EnvOverrides } from "./env.ts";
+export { buildChildEnv, defaultHostEnv, defaultHostStateDir, type EnvOverrides } from "./env.ts";
 export {
   AgentBrowserClient,
   type AgentBrowserClientConfig,

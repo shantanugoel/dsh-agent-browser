@@ -296,7 +296,10 @@ export class BrowserSession {
     if (what === "cookies") {
       const opts = typeof refOrOptions === "object" && refOrOptions !== null ? refOrOptions : {};
       const res = await this.client.call(["cookies"], this.opt(opts));
-      return res.data;
+      // 0.42 wraps the list as { cookies: [...] }; 0.34 returned a bare array.
+      // Keep the model-facing surface stable across both.
+      const payload = res.data as { cookies?: unknown };
+      return Array.isArray(payload?.cookies) ? payload.cookies : res.data;
     }
     const ref = typeof refOrOptions === "string" ? refOrOptions : "";
     if (!ref) throw new Error(`get(${what}) requires a ref`);
@@ -366,7 +369,7 @@ export class BrowserSession {
 
   /** Discover the live-stream port for this session (null when disabled). */
   streamPort(): Promise<number | null> {
-    return resolveStreamPort(this.client, this.name);
+    return resolveStreamPort(this.client, this.name, { socketDir: this.client.socketDir() });
   }
 
   /** Connect to this session's viewport stream. */

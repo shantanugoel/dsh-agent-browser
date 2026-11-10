@@ -15,14 +15,29 @@ Most users install the plugin package instead and never touch this directly.
 The `agent-browser` binary is resolved in this order:
 
 1. explicit `binaryPath` config
-2. `AGENT_BROWSER_BIN` environment variable
-3. `agent-browser` on `PATH`
-4. the pinned `agent-browser` npm dependency bundled with this package
+2. the pinned `agent-browser` package's `bin` entry (resolved from this
+   package's dependency graph, never from `PATH`)
+3. that package's platform-native `bin/agent-browser-<platform>-<arch>` file
 
 ## Environment
 
-Spawned daemons inherit a scrubbed environment; allowlists ride as
-`AGENT_BROWSER_ALLOWED_DOMAINS` (config + interactive grants merged).
+This package pins `agent-browser@0.42.0`. Spawned daemons inherit a scrubbed
+environment; allowlists ride as `AGENT_BROWSER_ALLOWED_DOMAINS` (config +
+interactive grants merged).
+
+0.42 replaced the old `AGENT_BROWSER_STATE_DIR` switch with namespaces and
+moved daemon/stream sidecars into the socket directory. `defaultHostEnv()`
+returns the supported isolation overrides for a DSH host:
+
+```ts
+import { defaultHostEnv } from "dsh-agent-browser-core";
+
+const env = defaultHostEnv(); // stable AGENT_BROWSER_NAMESPACE + short AGENT_BROWSER_SOCKET_DIR
+```
+
+The namespace is derived from `DSH_HOME`, so different DSH homes do not share
+daemon state. The short socket directory keeps session names inside the
+104-byte Unix socket path limit.
 
 ## License
 

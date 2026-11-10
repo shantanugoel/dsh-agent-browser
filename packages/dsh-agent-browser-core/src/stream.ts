@@ -56,17 +56,33 @@ export interface StreamOptions {
 const MIN_PORT = 1;
 const MAX_PORT = 65_535;
 
+/** Default sidecar directory for the host process environment. */
+function socketDirFromProcessEnv(): string {
+  const env = process.env;
+  const explicit = env["AGENT_BROWSER_SOCKET_DIR"];
+  if (explicit) return explicit;
+  const namespace = env["AGENT_BROWSER_NAMESPACE"];
+  const home = env["HOME"] ?? os.homedir();
+  if (namespace) return path.join(home, ".agent-browser", "namespaces", namespace, "run");
+  // Legacy 0.34 state dir; kept so older installs and tests still resolve.
+  return env["AGENT_BROWSER_STATE_DIR"] ?? path.join(home, ".agent-browser");
+}
+
 /**
  * Discover the stream port for one session. Reads the sidecar file first
  * (zero round-trips), falling back to `stream status --json`.
+ *
+ * @param options.socketDir - sidecar directory from the client's child env
+ *   (0.42 keeps `<session>.stream` there, not in the state dir).
  */
 export async function resolveStreamPort(
   client: AgentBrowserClient,
   session?: string,
+  options: { socketDir?: string } = {},
 ): Promise<number | null> {
   const name = session && session.length > 0 ? session : "default";
-  const stateDir = process.env["AGENT_BROWSER_STATE_DIR"] ?? path.join(process.env["HOME"] ?? os.homedir(), ".agent-browser");
-  const sidecar = path.join(stateDir, `${name}.stream`);
+  const socketDir = options.socketDir ?? socketDirFromProcessEnv();
+  const sidecar = path.join(socketDir, `${name}.stream`);
   try {
     const raw = (await readFile(sidecar, "utf8")).trim();
     const port = Number.parseInt(raw, 10);

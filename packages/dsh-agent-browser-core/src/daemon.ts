@@ -80,12 +80,18 @@ export async function stopAllSessions(client: AgentBrowserClient): Promise<void>
 
 /**
  * List live sessions as reported by the daemon registry.
+ *
+ * 0.42 returns session names as strings; older releases returned objects
+ * (`{ name, pid }`). Normalize both to object rows.
+ *
  * @throws {BrowserDriverError} when the listing cannot be read.
  */
 export async function listSessions(client: AgentBrowserClient): Promise<Array<Record<string, unknown>>> {
-  const res = await client.call<{ sessions?: Array<Record<string, unknown>> }>(["session", "list"], {
+  const res = await client.call<{ sessions?: Array<Record<string, unknown> | string> }>(["session", "list"], {
     timeoutMs: 20_000,
     includeLaunchArgs: false,
   });
-  return res.data.sessions ?? [];
+  return (res.data.sessions ?? []).map((entry) =>
+    typeof entry === "string" ? { name: entry } : entry,
+  );
 }

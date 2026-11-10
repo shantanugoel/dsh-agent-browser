@@ -119,18 +119,18 @@ WebSocket. Subagents pass distinct `session` names for isolation.
 
 | Package | Status | Role |
 |---|---|---|
-| `packages/dsh-agent-browser-core` | **implemented, tested** | Host-agnostic driver: module-relative binary resolution, JSON envelope parsing, batch-over-stdin, session registry, live WS stream client with ack pacing, daemon health/recovery helpers. Zero host dependencies; declares `agent-browser@0.34.0` pinned. |
+| `packages/dsh-agent-browser-core` | **implemented, tested** | Host-agnostic driver: module-relative binary resolution, JSON envelope parsing, batch-over-stdin, session registry, live WS stream client with ack pacing, daemon health/recovery helpers. Zero host dependencies; declares `agent-browser@0.42.0` pinned. |
 | `packages/dsh-agent-browser` | **server half live-verified, client built** | DSH bundle (`dsh.bundle.patch`): 9 model tools, prompt ladder, cookies redaction, eval gate, WS stream proxy + inventory + pop-out viewer routes. Client half contributes the overlay panel via `shell.overlay`; bundle format verified against the module-loader contract. **Proxy proven end-to-end against a real Chrome daemon (JPEG frames flow).** |
 | `packages/dsh-agent-browser-pi` | **implemented, typechecked** | pi extension (extensions/browser.ts): same tool surface over the shared core; dashboard-URL hint for viewing. |
 
 ## Verified against reality (not just written)
 
-- agent-browser 0.34.0 CLI/JSON contract captured from the shipped skill docs
+- agent-browser 0.42.0 CLI/JSON contract captured from the shipped skill docs
   AND probed live: `{success,data,error}` envelopes, batch stdin
   array-of-arrays, `snapshot -i --json` refs map, screenshot-to-path,
   per-session stream sidecar (`<session>.stream` holds the port), WS frame
   protocol (`frame/status/tabs/url/console`, base64 JPEG, ack pacing).
-- Core driver test-suite: 32 vitest tests over a mock CLI fixture covering
+- Core driver test-suite: 52 vitest tests over a mock CLI fixture covering
   envelope parsing, failure classification (`tab_gone`, stale refs),
   timeouts/kills, batch bail semantics, lifecycle stripping, session facade,
   registry events, binary resolution, stream port discovery.
@@ -308,6 +308,15 @@ no manual config edits. Config afterwards is optional via
   of the old service name). Verified against the 0.2.2-rc.1 desktop runtime:
   bundle composes, the client row loads from `/plugins`, and the panel mounts
   in headless Chrome with no console errors.
+- v0.2.5 / core v0.1.3 / pi v0.1.3: upgrade to `agent-browser@0.42.0`
+  (from 0.34.0). Adapts to 0.42's protocol changes: `cookies` now returns a
+  `{cookies:[...]}` wrapper (normalized back to an array), `session list`
+  returns names instead of objects, and stream/daemon sidecars moved from the
+  state dir into the socket dir. Since 0.42 ignores `AGENT_BROWSER_STATE_DIR`,
+  hosts now isolate through `AGENT_BROWSER_NAMESPACE` plus a short
+  `AGENT_BROWSER_SOCKET_DIR` derived from `DSH_HOME`; this also avoids the
+  104-byte Unix socket path limit. Verified live against Chrome: all 9 tools
+  pass and the ack-paced frame stream delivers JPEG frames.
 
 ## Install lifecycle — verified end-to-end in an isolated DSH_HOME
 

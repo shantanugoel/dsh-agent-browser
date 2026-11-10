@@ -3,3 +3,5 @@ packages:
 allowBuilds:
   agent-browser: true
   esbuild: true
+minimumReleaseAgeExclude:
+  - agent-browser@0.42.0

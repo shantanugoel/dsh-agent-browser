@@ -11,17 +11,18 @@
  * @module dsh-agent-browser-pi/browser
  */
 
-import os from "node:os";
-import path from "node:path";
 import {
   SessionRegistry,
+  defaultHostEnv,
   modelStepToActAction,
 } from "dsh-agent-browser-core";
 
 /** Shared registry for this extension's sessions — isolated from DSH/CLI daemons. */
 const registry = new SessionRegistry(
   {
-    env: { AGENT_BROWSER_STATE_DIR: path.join(os.homedir(), ".agent-browser-pi") },
+    // agent-browser 0.42 replaced AGENT_BROWSER_STATE_DIR with namespaces.
+    // The explicit fallback key keeps pi separate even inside a DSH process.
+    env: defaultHostEnv({}, "dsh-agent-browser-pi"),
     idleTimeoutMs: 15 * 60_000,
   },
   { idleTimeoutMs: 15 * 60_000 },

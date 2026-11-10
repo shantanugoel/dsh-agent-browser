@@ -9,6 +9,8 @@
  */
 
 import { spawn } from "node:child_process";
+import os from "node:os";
+import path from "node:path";
 import { buildChildEnv, type EnvOverrides } from "./env.ts";
 import {
   BatchStepError,
@@ -229,6 +231,23 @@ export class AgentBrowserClient {
   /** Current effective allowlist (config + runtime grants). */
   get allowedDomains(): readonly string[] {
     return this.cfg.allowedDomains ?? [];
+  }
+
+  /**
+   * Directory holding this client's agent-browser socket/stream sidecars.
+   *
+   * 0.42 moved these files out of the state dir: a namespace puts them under
+   * `$HOME/.agent-browser/namespaces/<name>/run`, and an explicit socket dir
+   * wins. Returns undefined to let the caller use its own env fallback.
+   */
+  socketDir(): string | undefined {
+    const env = this.cfg.env ?? {};
+    const explicit = env["AGENT_BROWSER_SOCKET_DIR"];
+    if (explicit) return explicit;
+    const namespace = env["AGENT_BROWSER_NAMESPACE"];
+    if (!namespace) return undefined;
+    const home = process.env["HOME"] ?? os.homedir();
+    return path.join(home, ".agent-browser", "namespaces", namespace, "run");
   }
 
   async call<T = Record<string, unknown>>(
