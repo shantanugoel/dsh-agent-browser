@@ -106,6 +106,31 @@ function normalizeTabs(raw: unknown): BrowserTab[] {
   });
 }
 
+/**
+ * HTTP origin that serves the panel routes (`/browser/*`).
+ *
+ * A normal web deployment can use the page origin. The DSH desktop shell loads
+ * this bundle from `dsh-app://app`, a custom scheme that cannot carry
+ * WebSockets, so the desktop preload's boot payload supplies the loopback Host
+ * origin instead.
+ */
+async function resolvePanelBase(): Promise<string> {
+  const boot = (
+    globalThis as {
+      dshDesktopBoot?: { ready?: () => Promise<{ streamBaseUrl?: string } | null> };
+    }
+  ).dshDesktopBoot;
+  if (location.protocol === "dsh-app:" && boot?.ready) {
+    try {
+      const info = await boot.ready();
+      if (info?.streamBaseUrl) return new URL(info.streamBaseUrl).origin;
+    } catch {
+      /* fall back to the page origin */
+    }
+  }
+  return location.origin;
+}
+
 /** GET the active session's browser tabs through our own origin. */
 async function fetchTabs(session: string | null): Promise<BrowserTab[]> {
   try {
@@ -179,64 +204,69 @@ function Viewer(props: {
       setAgeMs((prev) => (prev === null ? prev : prev + 500));
     }, 500);
 
-    try {
-      const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      ws = new WebSocket(proto + "//" + location.host + "/browser/stream?" + params.toString());
-      ws.binaryType = "arraybuffer";
-      ws.onopen = () => setStatus("live");
-      wsRef.current = ws;
-      ws.onerror = () => setStatus("error");
-      ws.onclose = () => setStatus((s) => (disposed ? s : "idle"));
-      ws.onmessage = async (ev: MessageEvent) => {
-        // The daemon sends every message as TEXT JSON (frames carry base64 JPEG).
-        if (typeof ev.data !== "string") return;
-        try {
-          const msg = JSON.parse(ev.data) as {
-            type?: string;
-            seq?: number;
-            data?: string;
-            text?: string;
-            url?: string;
-            tabs?: unknown;
-          };
-          if (msg.type === "console") {
-            const line = typeof msg.text === "string" ? msg.text : JSON.stringify(msg);
-            setFeed((prev) => [...prev.slice(-4), line.slice(0, 160)]);
-            return;
-          }
-          if (msg.type === "url" && typeof msg.url === "string") {
-            setFeed((prev) => [...prev.slice(-4), "→ " + msg.url]);
-            return;
-          }
-          if (msg.type === "tabs") {
-            props.onTabs?.(normalizeTabs(msg.tabs));
-            return;
-          }
-          if (msg.type !== "frame" || typeof msg.data !== "string") return;
-          const bytes = Uint8Array.from(atob(msg.data), (c) => c.charCodeAt(0));
-          const next = await createImageBitmap(new Blob([bytes.buffer as ArrayBuffer], { type: "image/jpeg" }));
-          bitmap?.close();
-          bitmap = next;
-          setAgeMs(0);
-          const canvas = canvasRef.current;
-          if (canvas) {
-            const ctx2d = canvas.getContext("2d");
-            if (ctx2d) {
-              canvas.width = next.width;
-              canvas.height = next.height;
-              ctx2d.drawImage(next, 0, 0);
+    const connect = async () => {
+      try {
+        const base = await resolvePanelBase();
+        if (disposed) return;
+        const proto = base.startsWith("https:") ? "wss:" : "ws:";
+        ws = new WebSocket(proto + "//" + new URL(base).host + "/browser/stream?" + params.toString());
+        ws.binaryType = "arraybuffer";
+        ws.onopen = () => setStatus("live");
+        wsRef.current = ws;
+        ws.onerror = () => setStatus("error");
+        ws.onclose = () => setStatus((s) => (disposed ? s : "idle"));
+        ws.onmessage = async (ev: MessageEvent) => {
+          // The daemon sends every message as TEXT JSON (frames carry base64 JPEG).
+          if (typeof ev.data !== "string") return;
+          try {
+            const msg = JSON.parse(ev.data) as {
+              type?: string;
+              seq?: number;
+              data?: string;
+              text?: string;
+              url?: string;
+              tabs?: unknown;
+            };
+            if (msg.type === "console") {
+              const line = typeof msg.text === "string" ? msg.text : JSON.stringify(msg);
+              setFeed((prev) => [...prev.slice(-4), line.slice(0, 160)]);
+              return;
             }
+            if (msg.type === "url" && typeof msg.url === "string") {
+              setFeed((prev) => [...prev.slice(-4), "→ " + msg.url]);
+              return;
+            }
+            if (msg.type === "tabs") {
+              props.onTabs?.(normalizeTabs(msg.tabs));
+              return;
+            }
+            if (msg.type !== "frame" || typeof msg.data !== "string") return;
+            const bytes = Uint8Array.from(atob(msg.data), (c) => c.charCodeAt(0));
+            const next = await createImageBitmap(new Blob([bytes.buffer as ArrayBuffer], { type: "image/jpeg" }));
+            bitmap?.close();
+            bitmap = next;
+            setAgeMs(0);
+            const canvas = canvasRef.current;
+            if (canvas) {
+              const ctx2d = canvas.getContext("2d");
+              if (ctx2d) {
+                canvas.width = next.width;
+                canvas.height = next.height;
+                ctx2d.drawImage(next, 0, 0);
+              }
+            }
+            if (msg.seq !== undefined && ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "ack", seq: msg.seq }));
+            }
+          } catch {
+            /* malformed frame: skip */
           }
-          if (msg.seq !== undefined && ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "ack", seq: msg.seq }));
-          }
-        } catch {
-          /* malformed frame: skip */
-        }
-      };
-    } catch {
-      setStatus("error");
-    }
+        };
+      } catch {
+        setStatus("error");
+      }
+    };
+    void connect();
 
     return () => {
       disposed = true;
@@ -663,7 +693,10 @@ export function BrowserPanel() {
           // Absolute within the shell's overlay layer (which spans the frame).
           // Center/details columns are inset by the effect above so chat isn't covered.
           position: "absolute",
-          top: 0,
+          // DSH Desktop draws its window caption buttons in a 40 px titlebar
+          // overlay; starting at 0 puts the panel's own header controls
+          // underneath them. Web deployments have no such overlay.
+          top: location.protocol === "dsh-app:" ? 40 : 0,
           bottom: 0,
           right: 0,
           width: effWidth,
