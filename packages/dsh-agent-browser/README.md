@@ -17,13 +17,14 @@ Part of a three-package family:
 
 Requires Node 24.9+, DSH 0.2.2 or newer with the web profile, and Chrome.
 Tested against DSH `0.2.2-rc.1` (host tools + web client panel).
-`agent-browser@0.42.0` uses installed system Chrome automatically; if none is
+`agent-browser@0.43.0` uses installed system Chrome automatically; if none is
 present, run the profile's `agent-browser install` once to fetch Chrome for
 Testing.
 
 **pnpm ≥ 10 gates dependency build scripts.** `agent-browser` ships one
-(`postinstall` fixes up its bundled native binary), so first allow it in the
-profile you are installing into — once per profile:
+(`postinstall` materializes the host-platform native binary from the matching
+`@agent-browser/cli-*` optional dependency), so first allow it in the profile
+you are installing into — once per profile:
 
 ```bash
 printf '\nallowBuilds:\n  agent-browser: true\n' >> ~/.dsh/profiles/web/pnpm-workspace.yaml
@@ -40,9 +41,13 @@ appears automatically. If the add step fails with `ERR_PNPM_IGNORED_BUILDS`,
 the allowance above was not applied to that profile's `pnpm-workspace.yaml`
 (interactive alternative: `cd ~/.dsh/profiles/web && pnpm approve-builds`).
 
-> Note: the binaries needed at runtime ship inside the `agent-browser`
-> tarball, so tools work even where lifecycle scripts stay blocked; the
-> allowance exists to satisfy default supply-chain policy during install.
+> Note: 0.43 ships the native binary in per-platform `@agent-browser/cli-*`
+> optional dependencies instead of the main tarball, so tools still work
+> where lifecycle scripts stay blocked: the launcher materializes and links
+> the platform binary on first run. Keep optional dependencies enabled (an
+> `--omit=optional` / `optional=false` install leaves no binary to link); the
+> allowance exists to satisfy default supply-chain policy and prepare the
+> binary eagerly during install.
 
 Uninstall: `dsh plugin --profile web remove dsh-agent-browser`.
 

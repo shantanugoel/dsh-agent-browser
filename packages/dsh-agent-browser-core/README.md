@@ -19,9 +19,16 @@ The `agent-browser` binary is resolved in this order:
    package's dependency graph, never from `PATH`)
 3. that package's platform-native `bin/agent-browser-<platform>-<arch>` file
 
+0.43 ships the native binary inside per-platform `@agent-browser/cli-*`
+optional packages; the pinned package's `bin/agent-browser.js` launcher finds
+and runs the matching one. The order above is unchanged: the launcher always
+wins, and the platform-native fallback is the file the postinstall (or the
+launcher's first run, when install scripts are blocked) materializes into
+`bin/`.
+
 ## Environment
 
-This package pins `agent-browser@0.42.0`. Spawned daemons inherit a scrubbed
+This package pins `agent-browser@0.43.0`. Spawned daemons inherit a scrubbed
 environment; allowlists ride as `AGENT_BROWSER_ALLOWED_DOMAINS` (config +
 interactive grants merged).
 

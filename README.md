@@ -27,19 +27,22 @@ automation, batched actions, and a baked-in live viewport panel. See
 > profile and killed all tool calls on freshly booted instances.
 >
 > **pnpm 11 build-script gate:** `agent-browser` ships a `postinstall` that
-> fixes up its bundled native binary. pnpm ≥ 10 blocks dependency lifecycle
-> scripts unless your project allows them, and `dsh plugin add` surfaces that
-> as a hard error (`ERR_PNPM_IGNORED_BUILDS`). One-time fix, per dsh profile:
+> materializes the host-platform native binary. Since 0.43 that binary lives
+> in a per-platform `@agent-browser/cli-*` optional dependency rather than the
+> main tarball. pnpm ≥ 10 blocks dependency lifecycle scripts unless your
+> project allows them, and `dsh plugin add` surfaces that as a hard error
+> (`ERR_PNPM_IGNORED_BUILDS`). One-time fix, per dsh profile:
 >
 > ```bash
 > printf '\nallowBuilds:\n  agent-browser: true\n' >> ~/.dsh/profiles/<profile>/pnpm-workspace.yaml
 > ```
 >
 > then run the `dsh plugin add` command below again. (Interactive alternative:
-> `cd ~/.dsh/profiles/<profile> && pnpm approve-builds`.) The script is
-> redundant where binaries are bundled — we verified the CLI runs fine with
-> scripts ignored — but the allowance is still required for the install to
-> succeed under default policy.
+> `cd ~/.dsh/profiles/<profile> && pnpm approve-builds`.) The script is an
+> optimization: 0.43's launcher self-heals by linking the platform binary on
+> first run, and we verified the CLI works with scripts ignored as long as
+> optional dependencies stay enabled. The allowance still keeps the install
+> clean under default policy and avoids the first-run setup work.
 
 ```bash
 # in any DSH profile (web GUI, TUI, headless):
@@ -119,13 +122,13 @@ WebSocket. Subagents pass distinct `session` names for isolation.
 
 | Package | Status | Role |
 |---|---|---|
-| `packages/dsh-agent-browser-core` | **implemented, tested** | Host-agnostic driver: module-relative binary resolution, JSON envelope parsing, batch-over-stdin, session registry, live WS stream client with ack pacing, daemon health/recovery helpers. Zero host dependencies; declares `agent-browser@0.42.0` pinned. |
+| `packages/dsh-agent-browser-core` | **implemented, tested** | Host-agnostic driver: module-relative binary resolution, JSON envelope parsing, batch-over-stdin, session registry, live WS stream client with ack pacing, daemon health/recovery helpers. Zero host dependencies; declares `agent-browser@0.43.0` pinned. |
 | `packages/dsh-agent-browser` | **server half live-verified, client built** | DSH bundle (`dsh.bundle.patch`): 9 model tools, prompt ladder, cookies redaction, eval gate, WS stream proxy + inventory + pop-out viewer routes. Client half contributes the overlay panel via `shell.overlay`; bundle format verified against the module-loader contract. **Proxy proven end-to-end against a real Chrome daemon (JPEG frames flow).** |
 | `packages/dsh-agent-browser-pi` | **implemented, typechecked** | pi extension (extensions/browser.ts): same tool surface over the shared core; dashboard-URL hint for viewing. |
 
 ## Verified against reality (not just written)
 
-- agent-browser 0.42.0 CLI/JSON contract captured from the shipped skill docs
+- agent-browser 0.43.0 CLI/JSON contract captured from the shipped skill docs
   AND probed live: `{success,data,error}` envelopes, batch stdin
   array-of-arrays, `snapshot -i --json` refs map, screenshot-to-path,
   per-session stream sidecar (`<session>.stream` holds the port), WS frame
@@ -317,6 +320,17 @@ no manual config edits. Config afterwards is optional via
   `AGENT_BROWSER_SOCKET_DIR` derived from `DSH_HOME`; this also avoids the
   104-byte Unix socket path limit. Verified live against Chrome: all 9 tools
   pass and the ack-paced frame stream delivers JPEG frames.
+- v0.2.6 / core v0.1.4 / pi v0.1.4: upgrade to `agent-browser@0.43.0`
+  (from 0.42.0). No driver changes were needed: the `{success,data,error}`
+  envelope, batch-over-stdin, `session list` names, `{cookies:[...]}`, the
+  socket-dir sidecars (`<session>.stream`), and the ack-paced WS frame
+  protocol are unchanged. 0.43 ships the native binary as per-platform
+  `@agent-browser/cli-*` optional packages and resolves them through the
+  pinned package's launcher, so module-relative binary resolution is
+  unchanged; snapshots gain `hint="…"` annotations after unnamed/shared-name
+  refs, which reach the model verbatim (ref parsing is unaffected). Verified
+  live against Chrome: the driver paths behind all 9 tools, batch act,
+  cookies/tabs/screenshot, session list, and an ack-paced JPEG frame.
 
 ## Install lifecycle — verified end-to-end in an isolated DSH_HOME
 

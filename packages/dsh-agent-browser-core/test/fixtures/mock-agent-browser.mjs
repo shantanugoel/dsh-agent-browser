@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Mock agent-browser CLI used by the driver's test-suite. Speaks the same
- * stdout JSON contract as agent-browser 0.42.0 for the subset of commands
+ * stdout JSON contract as agent-browser 0.43.0 for the subset of commands
  * the core driver issues, plus fault-injection switches via MOCK_* env vars.
  *
  * Usage (the driver spawns): node mock-agent-browser.mjs --json --session S <cmd…>

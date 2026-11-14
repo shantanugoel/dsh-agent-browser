@@ -1,6 +1,6 @@
 /**
  * Wire types of the agent-browser CLI/JSON protocol, as spoken by the
- * `agent-browser` binary (verified against 0.42.0). The driver parses these
+ * `agent-browser` binary (verified against 0.43.0). The driver parses these
  * envelopes and projects them into the typed surfaces of this package.
  *
  * @module dsh-agent-browser-core/types

@@ -4,4 +4,4 @@ allowBuilds:
   agent-browser: true
   esbuild: true
 minimumReleaseAgeExclude:
-  - agent-browser@0.42.0
+  - agent-browser@0.43.0
