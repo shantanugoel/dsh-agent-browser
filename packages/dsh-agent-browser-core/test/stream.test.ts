@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionStream, resolveStreamPort } from "../src/stream.ts";
@@ -169,6 +169,32 @@ describe("resolveStreamPort", () => {
       expect(port).toBe(4321);
     } finally {
       delete process.env["AGENT_BROWSER_STATE_DIR"];
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("composes an explicit socket dir with a namespace from the process env", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ab-sidecar-"));
+    const nested = join(dir, "namespaces", "ns1", "run");
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(nested, "n9.stream"), "4567");
+    process.env["AGENT_BROWSER_SOCKET_DIR"] = dir;
+    process.env["AGENT_BROWSER_NAMESPACE"] = "ns1";
+    delete process.env["AGENT_BROWSER_STATE_DIR"];
+    try {
+      // The sidecar must be found without the `stream status` fallback spawn.
+      const port = await resolveStreamPort(
+        {
+          call: async () => {
+            throw new Error("stream status must not be needed when the sidecar exists");
+          },
+        } as unknown as AgentBrowserClient,
+        "n9",
+      );
+      expect(port).toBe(4567);
+    } finally {
+      delete process.env["AGENT_BROWSER_SOCKET_DIR"];
+      delete process.env["AGENT_BROWSER_NAMESPACE"];
       rmSync(dir, { recursive: true, force: true });
     }
   });

@@ -15,16 +15,20 @@ Most users install the plugin package instead and never touch this directly.
 The `agent-browser` binary is resolved in this order:
 
 1. explicit `binaryPath` config
-2. the pinned `agent-browser` package's `bin` entry (resolved from this
-   package's dependency graph, never from `PATH`)
-3. that package's platform-native `bin/agent-browser-<platform>-<arch>` file
+2. the host-platform native executable materialized in the pinned package's
+   `bin/` (`agent-browser-<platform>-<arch>`, with the musl name on musl Linux
+   and the ARM64/x64 candidates on Windows; resolved from this package's
+   dependency graph, never from `PATH`)
+3. the pinned package's `bin` entry — a JS launcher that resolves the
+   per-platform package itself
 
-0.43 ships the native binary inside per-platform `@agent-browser/cli-*`
-optional packages; the pinned package's `bin/agent-browser.js` launcher finds
-and runs the matching one. The order above is unchanged: the launcher always
-wins, and the platform-native fallback is the file the postinstall (or the
-launcher's first run, when install scripts are blocked) materializes into
-`bin/`.
+The native file is preferred because it skips the launcher's Node process: one
+fewer process (~0.1s) on every CLI call. 0.43 ships the native binary inside
+per-platform `@agent-browser/cli-*` optional packages, and its launcher
+hardlinks/copies the matching one into `bin/` on install; when install scripts
+are blocked, the first launcher run materializes it and later calls take the
+native fast path. The launcher remains the fallback whenever no native file
+has been materialized yet.
 
 ## Environment
 

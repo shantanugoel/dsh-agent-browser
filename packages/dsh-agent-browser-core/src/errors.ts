@@ -8,7 +8,10 @@
 
 /** Well-known machine codes agent-browser embeds in JSON error payloads. */
 export type KnownFailureCode =
-  /** The pinned/active tab disappeared; recovery data names the targetId. */
+  /**
+   * The pinned/active tab disappeared — including a detached CDP target or a
+   * closed session; recovery data may name the targetId.
+   */
   | "tab_gone"
   /** A snapshot ref (or selector) no longer resolves on the current page. */
   | "ref_not_found"
@@ -84,8 +87,14 @@ export class CallTimeoutError extends BrowserDriverError {
  * Returns undefined for unrecognized text.
  */
 export function classifyFailure(errorText: string): KnownFailureCode | undefined {
-  if (/tab_gone/.test(errorText)) return "tab_gone";
-  if (/ref not found|element not found/i.test(errorText)) return "ref_not_found";
+  // agent-browser 0.43 fails a command on a closed tab immediately with
+  // "Target closed: CDP session <id> detached"; 0.42 reported the same
+  // condition as "Session with given id not found". Either way the tab behind
+  // the refs is gone, so hosts get the same recovery signal as tab_gone.
+  if (/tab_gone|Target closed: CDP session .* detached|Session with given id not found/i.test(errorText)) {
+    return "tab_gone";
+  }
+  if (/unknown ref|ref not found|element not found/i.test(errorText)) return "ref_not_found";
   if (/not (?:in|on) the allowed(?:-| )domains?|allowed_domains/i.test(errorText)) return "domain_not_allowed";
   return undefined;
 }

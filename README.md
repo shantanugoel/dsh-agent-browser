@@ -331,6 +331,18 @@ no manual config edits. Config afterwards is optional via
   refs, which reach the model verbatim (ref parsing is unaffected). Verified
   live against Chrome: the driver paths behind all 9 tools, batch act,
   cookies/tabs/screenshot, session list, and an ack-paced JPEG frame.
+- v0.2.7 / core v0.1.5 / pi v0.1.5: follow-ups to the 0.43 upgrade. Binary
+  resolution now prefers the host-platform native executable that
+  agent-browser materializes in its `bin/` (musl-aware on Linux, ARM64-aware
+  on Windows) and only falls back to the JS launcher when none exists —
+  measured ~126ms less per CLI call on macOS. Socket-dir discovery now
+  composes `AGENT_BROWSER_SOCKET_DIR` with `AGENT_BROWSER_NAMESPACE`
+  (`<socket-dir>/namespaces/<ns>/run`), so stream connects read the sidecar
+  instead of spawning `stream status`. Failure classification maps 0.43's
+  fast closed-tab error (`Target closed: CDP session <id> detached`; 0.42:
+  `Session with given id not found`) to `tab_gone`, and `Unknown ref: eN` to
+  `ref_not_found`. Verified live against 0.43 + Chrome: native binary path,
+  composed sidecar discovery with no fallback spawn, and per-call latency.
 
 ## Install lifecycle — verified end-to-end in an isolated DSH_HOME
 

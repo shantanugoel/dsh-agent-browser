@@ -112,6 +112,26 @@ describe("AgentBrowserClient", () => {
   });
 });
 
+describe("socketDir", () => {
+  it("nests a namespace under an explicit socket dir", () => {
+    const client = new AgentBrowserClient({
+      env: {
+        AGENT_BROWSER_SOCKET_DIR: "/tmp/sock-root",
+        AGENT_BROWSER_NAMESPACE: "ns-ab",
+      },
+    });
+    expect(client.socketDir()).toBe(path.join("/tmp/sock-root", "namespaces", "ns-ab", "run"));
+  });
+
+  it("returns the explicit socket dir when no namespace is set", () => {
+    const client = new AgentBrowserClient({ env: { AGENT_BROWSER_SOCKET_DIR: "/tmp/sock-root" } });
+    expect(client.socketDir()).toBe("/tmp/sock-root");
+  });
+
+  it("returns undefined when neither override is set", () => {
+    expect(new AgentBrowserClient({}).socketDir()).toBeUndefined();
+  });
+});
 
 describe("stripLifecycle array preservation", () => {
   it("keeps top-level arrays as arrays", async () => {

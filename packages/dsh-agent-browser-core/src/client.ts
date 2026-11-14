@@ -236,15 +236,20 @@ export class AgentBrowserClient {
   /**
    * Directory holding this client's agent-browser socket/stream sidecars.
    *
-   * 0.42 moved these files out of the state dir: a namespace puts them under
-   * `$HOME/.agent-browser/namespaces/<name>/run`, and an explicit socket dir
-   * wins. Returns undefined to let the caller use its own env fallback.
+   * 0.42 moved these files out of the state dir: an explicit
+   * `AGENT_BROWSER_SOCKET_DIR` wins, and a namespace nests them under
+   * `<socket-dir>/namespaces/<name>/run` (or
+   * `$HOME/.agent-browser/namespaces/<name>/run` when no socket dir is set).
+   * Both overrides compose — `defaultHostEnv()` always sets both, so the
+   * nested path is the common case. Returns undefined to let the caller use
+   * its own env fallback.
    */
   socketDir(): string | undefined {
     const env = this.cfg.env ?? {};
     const explicit = env["AGENT_BROWSER_SOCKET_DIR"];
-    if (explicit) return explicit;
     const namespace = env["AGENT_BROWSER_NAMESPACE"];
+    if (explicit && namespace) return path.join(explicit, "namespaces", namespace, "run");
+    if (explicit) return explicit;
     if (!namespace) return undefined;
     const home = process.env["HOME"] ?? os.homedir();
     return path.join(home, ".agent-browser", "namespaces", namespace, "run");

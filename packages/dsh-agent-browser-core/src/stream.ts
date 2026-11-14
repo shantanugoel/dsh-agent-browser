@@ -60,9 +60,11 @@ const MAX_PORT = 65_535;
 function socketDirFromProcessEnv(): string {
   const env = process.env;
   const explicit = env["AGENT_BROWSER_SOCKET_DIR"];
-  if (explicit) return explicit;
   const namespace = env["AGENT_BROWSER_NAMESPACE"];
   const home = env["HOME"] ?? os.homedir();
+  // Both overrides compose: a namespace nests under the explicit socket dir.
+  if (explicit && namespace) return path.join(explicit, "namespaces", namespace, "run");
+  if (explicit) return explicit;
   if (namespace) return path.join(home, ".agent-browser", "namespaces", namespace, "run");
   // Legacy 0.34 state dir; kept so older installs and tests still resolve.
   return env["AGENT_BROWSER_STATE_DIR"] ?? path.join(home, ".agent-browser");
@@ -73,7 +75,8 @@ function socketDirFromProcessEnv(): string {
  * (zero round-trips), falling back to `stream status --json`.
  *
  * @param options.socketDir - sidecar directory from the client's child env
- *   (0.42 keeps `<session>.stream` there, not in the state dir).
+ *   (0.42+ keeps `<session>.stream` there, nested under
+ *   `namespaces/<name>/run` when a namespace is set).
  */
 export async function resolveStreamPort(
   client: AgentBrowserClient,
