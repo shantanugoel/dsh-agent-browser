@@ -433,30 +433,41 @@ function viewerHtml(): string {
   };
   void refreshTabs();
   setInterval(refreshTabs, 5000);
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
   let bitmap = null;
   let ageMs = null;
   setInterval(() => { if (ageMs !== null) { ageMs += 500; if (ageMs > 4000) status.textContent = Math.round(ageMs / 1000) + "s stale"; } }, 500);
-  const ws = new WebSocket(proto + "//" + location.host + "/browser/stream?" + p);
-  ws.binaryType = "arraybuffer";
-  ws.onopen = () => status.textContent = "live";
-  ws.onerror = () => status.textContent = "error";
-  ws.onmessage = async (ev) => {
-    // daemon sends TEXT JSON (base64 JPEG inside); binary never arrives
-    if (typeof ev.data !== "string") return;
-    try {
-      const msg = JSON.parse(ev.data);
-      if (msg.type === "tabs") { renderTabs(normTabs(msg.tabs)); return; }
-      if (msg.type !== "frame") return;
-      const bytes = Uint8Array.from(atob(msg.data), (c) => c.charCodeAt(0));
-      const next = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
-      if (bitmap) bitmap.close();
-      bitmap = next; ageMs = 0;
-      canvas.width = next.width; canvas.height = next.height;
-      canvas.getContext("2d").drawImage(next, 0, 0);
-      if (typeof msg.seq === "number") ws.send(JSON.stringify({ type: "ack", seq: msg.seq }));
-    } catch {}
-  };
+  let ws = null;
+  void (async () => {
+    // dsh-app:// cannot carry WebSockets; the desktop preload exposes the Host origin.
+    let base = location.origin;
+    if (location.protocol === "dsh-app:" && globalThis.dshDesktopBoot && globalThis.dshDesktopBoot.ready) {
+      try {
+        const boot = await globalThis.dshDesktopBoot.ready();
+        if (boot && boot.streamBaseUrl) base = boot.streamBaseUrl;
+      } catch {}
+    }
+    const wsProto = base.startsWith("https") ? "wss:" : "ws:";
+    ws = new WebSocket(wsProto + "//" + new URL(base).host + "/browser/stream?" + p);
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => status.textContent = "live";
+    ws.onerror = () => status.textContent = "error";
+    ws.onmessage = async (ev) => {
+      // daemon sends TEXT JSON (base64 JPEG inside); binary never arrives
+      if (typeof ev.data !== "string") return;
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "tabs") { renderTabs(normTabs(msg.tabs)); return; }
+        if (msg.type !== "frame") return;
+        const bytes = Uint8Array.from(atob(msg.data), (c) => c.charCodeAt(0));
+        const next = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
+        if (bitmap) bitmap.close();
+        bitmap = next; ageMs = 0;
+        canvas.width = next.width; canvas.height = next.height;
+        canvas.getContext("2d").drawImage(next, 0, 0);
+        if (typeof msg.seq === "number") ws.send(JSON.stringify({ type: "ack", seq: msg.seq }));
+      } catch {}
+    };
+  })();
 })();
 </script>
 </body>

@@ -268,6 +268,20 @@ describe("panel server half", () => {
     expect(html).not.toMatch(/https?:\/\//);
   });
 
+  it("viewer page resolves the desktop Host origin before opening the stream", async () => {
+    const ws = fakeWebServer();
+    mountPanel({}, ws as never, new SessionRegistry(), CONFIG);
+    const route = ws.routes.find((r) => r.path === "/browser/viewer")!;
+    const captured = captureRes();
+    await route.handler(fakeReq("/browser/viewer"), captured.res);
+    const html = captured.body();
+    // dsh-app:// cannot carry WebSockets, so the page must fall back to the
+    // desktop preload's streamBaseUrl before dialing /browser/stream.
+    expect(html).toContain("dshDesktopBoot");
+    expect(html).toContain("streamBaseUrl");
+    expect(html).toContain("/browser/stream");
+  });
+
   describe("cross-site write fence", () => {
     /** Build a POST with an explicit Origin header. */
     const postWithOrigin = (path: string, origin: string | undefined, body: string): IncomingMessage => {
