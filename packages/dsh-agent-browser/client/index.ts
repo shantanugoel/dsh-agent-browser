@@ -21,6 +21,7 @@
  */
 
 import { createElement, useCallback, useEffect, useRef, useState } from "react";
+import { visibleInterval } from "./visible-interval.ts";
 
 interface SessionRow {
   name: string | null;
@@ -504,31 +505,37 @@ export function BrowserPanel() {
 
   useEffect(() => {
     let alive = true;
-    const poll = async () => {
-      // Background tab: the panel is invisible; skip the cycle entirely
-      // (auto-open resumes on the first visible tick after return).
-      if (document.visibilityState === "hidden") return;
-      const inv = await fetchInventory();
-      if (!alive || inv === null) return;
-      setInventory(inv);
-      // Auto-open ONCE per page load when a session goes live; an explicit
-      // close afterwards sticks (unlike re-forcing open on every poll).
-      if (
-        !autoOpenedRef.current &&
-        inv.autoOpenPanel &&
-        inv.sessions.length > 0 &&
-        loadMode() === "chip"
-      ) {
-        autoOpenedRef.current = true;
-        applyMode("float");
-      }
-      setPicked((prev) => prev ?? inv.sessions[0]?.name ?? null);
-    };
-    void poll();
-    const timer = window.setInterval(poll, 2500);
+    let last = "";
+    // Runs only while the page is visible (no timer while hidden, immediate refresh on return) and backs
+    // off from 2.5 s to 10 s while the inventory is unchanged.
+    const stop = visibleInterval({
+      baseMs: 2500,
+      maxMs: 10_000,
+      run: async () => {
+        const inv = await fetchInventory();
+        if (!alive || inv === null) return false;
+        const signature = JSON.stringify(inv);
+        const changed = signature !== last;
+        last = signature;
+        if (changed) setInventory(inv);
+        // Auto-open ONCE per page load when a session goes live; an explicit
+        // close afterwards sticks (unlike re-forcing open on every poll).
+        if (
+          !autoOpenedRef.current &&
+          inv.autoOpenPanel &&
+          inv.sessions.length > 0 &&
+          loadMode() === "chip"
+        ) {
+          autoOpenedRef.current = true;
+          applyMode("float");
+        }
+        setPicked((prev) => prev ?? inv.sessions[0]?.name ?? null);
+        return changed;
+      },
+    });
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      stop();
     };
   }, [applyMode]);
 
