@@ -5,8 +5,9 @@
  * in the build pipeline, so the shipped bundle is a tiny CJS factory wrap.
  *
  * Three display modes (persisted per browser in localStorage):
- *   chip    — collapsed launcher button, bottom-right (panel closed).
- *   float   — the original small floating card.
+ *   chip    — collapsed launcher: a small round icon button the user can drag to either screen
+ *             edge (position saved per device; default right edge, vertically centred).
+ *   float   — the original small floating card, now anchored next to the chip.
  *   sidebar — Codex-style right overlay: docked full-height on the right,
  *             drag-resizable, with a SESSION tab strip (one tab per live
  *             session) and, beneath it, a BROWSER tab strip. Conversation
@@ -21,6 +22,20 @@
  */
 
 import { createElement, useCallback, useEffect, useRef, useState } from "react";
+import {
+  chipSize,
+  clampFree,
+  exceedsTapSlop,
+  loadPlacement,
+  panelLayout,
+  placementToRect,
+  savePlacement,
+  snapPlacement,
+  type ChipPlacement,
+  type PanelLayout,
+  type Viewport,
+} from "./chip-position.ts";
+import { visibleInterval } from "./visible-interval.ts";
 
 interface SessionRow {
   name: string | null;
@@ -487,6 +502,186 @@ function BrowserTabStrip(props: {
   );
 }
 
+/** The visible viewport in layout coordinates, plus the layout viewport height (reference for `bottom`). */
+function readViewport(): { vp: Viewport; layoutHeight: number; coarse: boolean } {
+  const vv = window.visualViewport;
+  const layoutHeight = document.documentElement.clientHeight || window.innerHeight;
+  const vp: Viewport = vv
+    ? { left: vv.offsetLeft, top: vv.offsetTop, width: vv.width, height: vv.height }
+    : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+  const coarse = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+  return { vp, layoutHeight, coarse };
+}
+
+/** Re-read the visible viewport on resize, orientation change and on-screen-keyboard (visualViewport) changes. */
+function useViewport() {
+  const [view, setView] = useState(readViewport);
+  useEffect(() => {
+    const update = () => setView(readViewport());
+    const vv = window.visualViewport;
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    vv?.addEventListener("resize", update);
+    vv?.addEventListener("scroll", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+      vv?.removeEventListener("resize", update);
+      vv?.removeEventListener("scroll", update);
+    };
+  }, []);
+  return view;
+}
+
+const MONITOR_PATHS = ["M3 5h18v11H3z", "M8 20h8", "M12 16v4"];
+
+/** Round launcher: monitor icon, session-count badge, draggable to either edge, tap toggles the panel. */
+function LauncherChip(props: {
+  count: number;
+  open: boolean;
+  size: number;
+  placement: ChipPlacement;
+  vp: Viewport;
+  layoutHeight: number;
+  onToggle: () => void;
+  onPlace: (next: ChipPlacement) => void;
+}) {
+  const { size, vp } = props;
+  const [drag, setDrag] = useState<{ left: number; top: number } | null>(null);
+  const gesture = useRef<{ id: number; x: number; y: number; left: number; top: number; moved: boolean } | null>(null);
+  const rest = placementToRect(props.placement, size, vp, props.layoutHeight);
+  const pos = drag ?? rest;
+  const label = "Browser" + (props.count > 0 ? " (" + props.count + ")" : "");
+
+  const onPointerDown = (ev: React.PointerEvent<HTMLButtonElement>) => {
+    if (ev.pointerType === "mouse" && ev.button !== 0) return;
+    gesture.current = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, left: rest.left, top: rest.top, moved: false };
+    try {
+      ev.currentTarget.setPointerCapture(ev.pointerId);
+    } catch {
+      /* capture is best effort */
+    }
+  };
+  const onPointerMove = (ev: React.PointerEvent<HTMLButtonElement>) => {
+    const g = gesture.current;
+    if (!g || g.id !== ev.pointerId) return;
+    const dx = ev.clientX - g.x;
+    const dy = ev.clientY - g.y;
+    if (!g.moved && !exceedsTapSlop(dx, dy)) return;
+    g.moved = true;
+    setDrag(clampFree(g.left + dx, g.top + dy, size, vp));
+  };
+  const finish = (ev: React.PointerEvent<HTMLButtonElement>, cancelled: boolean) => {
+    const g = gesture.current;
+    if (!g || g.id !== ev.pointerId) return;
+    gesture.current = null;
+    try {
+      ev.currentTarget.releasePointerCapture(ev.pointerId);
+    } catch {
+      /* already released */
+    }
+    if (!g.moved) {
+      // A tap toggles here rather than in onClick: the browser does not reliably synthesize a click for
+      // every touch tap on a pointer-captured element. onClick below only serves keyboard activation.
+      if (!cancelled) props.onToggle();
+      return;
+    }
+    if (!cancelled) {
+      const end = clampFree(g.left + ev.clientX - g.x, g.top + ev.clientY - g.y, size, vp);
+      props.onPlace(snapPlacement(end.left, end.top, size, vp, props.layoutHeight));
+    }
+    setDrag(null);
+  };
+
+  return createElement(
+    "button",
+    {
+      type: "button",
+      "data-browser-chip": props.open ? "open" : "closed",
+      "aria-label": label,
+      "aria-expanded": props.open,
+      title: label,
+      onPointerDown,
+      onPointerMove,
+      onPointerUp: (ev: React.PointerEvent<HTMLButtonElement>) => finish(ev, false),
+      onPointerCancel: (ev: React.PointerEvent<HTMLButtonElement>) => finish(ev, true),
+      onClick: (ev: React.MouseEvent<HTMLButtonElement>) => {
+        // detail === 0: Enter/Space on the focused button. Pointer clicks (detail >= 1) are handled in
+        // onPointerUp (taps) and ignored after drags.
+        if (ev.detail === 0) props.onToggle();
+      },
+      style: {
+        position: "fixed",
+        left: pos.left,
+        top: pos.top,
+        width: size,
+        height: size,
+        zIndex: 31,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 0,
+        borderRadius: "50%",
+        cornerShape: "round", // the host theme squircles every button; keep the chip a true circle
+        border: "1px solid var(--dsw-alias-border-l2, #333)",
+        background: props.open ? "var(--dsw-alias-bg-layer-2, #26262b)" : "var(--dsw-alias-bg-layer-1, #1b1b1f)",
+        color: "var(--dsw-alias-label-primary, #ddd)",
+        boxShadow: "0 2px 8px rgba(0,0,0,.28)",
+        cursor: drag ? "grabbing" : "grab",
+        touchAction: "none", // this chip only: lets touch drags move it instead of scrolling the page
+        userSelect: "none",
+        WebkitUserSelect: "none",
+        pointerEvents: "auto",
+        transition: drag ? "none" : "left .15s ease, top .15s ease",
+      } as React.CSSProperties,
+    },
+    createElement(
+      "svg",
+      {
+        width: 18,
+        height: 18,
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: 2,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        "aria-hidden": true,
+        style: { pointerEvents: "none" },
+      },
+      ...MONITOR_PATHS.map((d) => createElement("path", { key: d, d })),
+    ),
+    props.count > 0
+      ? createElement(
+          "span",
+          {
+            "data-browser-chip-badge": "1",
+            style: {
+              position: "absolute",
+              top: -4,
+              right: -4,
+              minWidth: 16,
+              height: 16,
+              padding: "0 4px",
+              boxSizing: "border-box",
+              borderRadius: 8,
+              fontSize: 10,
+              fontWeight: 600,
+              lineHeight: "16px",
+              textAlign: "center",
+              // Inverted label/background pair: readable on any theme (brand-primary can be near-black).
+              background: "var(--dsw-alias-label-primary, #ddd)",
+              color: "var(--dsw-alias-bg-base, #1b1b1f)",
+              border: "1.5px solid var(--dsw-alias-bg-base, #1b1b1f)",
+              pointerEvents: "none",
+            } as React.CSSProperties,
+          },
+          props.count > 99 ? "99+" : String(props.count),
+        )
+      : null,
+  );
+}
+
 /** The panel: launcher chip, floating card, or docked right sidebar. */
 export function BrowserPanel() {
   const [inventory, setInventory] = useState<Inventory | null>(null);
@@ -494,6 +689,8 @@ export function BrowserPanel() {
   const [picked, setPicked] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => loadWidth());
   const [bTabs, setBTabs] = useState<BrowserTab[]>([]);
+  const [placement, setPlacement] = useState<ChipPlacement>(() => loadPlacement());
+  const { vp, layoutHeight, coarse } = useViewport();
   const open = mode !== "chip";
   const autoOpenedRef = useRef(false);
 
@@ -504,31 +701,37 @@ export function BrowserPanel() {
 
   useEffect(() => {
     let alive = true;
-    const poll = async () => {
-      // Background tab: the panel is invisible; skip the cycle entirely
-      // (auto-open resumes on the first visible tick after return).
-      if (document.visibilityState === "hidden") return;
-      const inv = await fetchInventory();
-      if (!alive || inv === null) return;
-      setInventory(inv);
-      // Auto-open ONCE per page load when a session goes live; an explicit
-      // close afterwards sticks (unlike re-forcing open on every poll).
-      if (
-        !autoOpenedRef.current &&
-        inv.autoOpenPanel &&
-        inv.sessions.length > 0 &&
-        loadMode() === "chip"
-      ) {
-        autoOpenedRef.current = true;
-        applyMode("float");
-      }
-      setPicked((prev) => prev ?? inv.sessions[0]?.name ?? null);
-    };
-    void poll();
-    const timer = window.setInterval(poll, 2500);
+    let last = "";
+    // Runs only while the page is visible (no timer while hidden, immediate refresh on return) and backs
+    // off from 2.5 s to 10 s while the inventory is unchanged.
+    const stop = visibleInterval({
+      baseMs: 2500,
+      maxMs: 10_000,
+      run: async () => {
+        const inv = await fetchInventory();
+        if (!alive || inv === null) return false;
+        const signature = JSON.stringify(inv);
+        const changed = signature !== last;
+        last = signature;
+        if (changed) setInventory(inv);
+        // Auto-open ONCE per page load when a session goes live; an explicit
+        // close afterwards sticks (unlike re-forcing open on every poll).
+        if (
+          !autoOpenedRef.current &&
+          inv.autoOpenPanel &&
+          inv.sessions.length > 0 &&
+          loadMode() === "chip"
+        ) {
+          autoOpenedRef.current = true;
+          applyMode("float");
+        }
+        setPicked((prev) => prev ?? inv.sessions[0]?.name ?? null);
+        return changed;
+      },
+    });
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      stop();
     };
   }, [applyMode]);
 
@@ -647,10 +850,13 @@ export function BrowserPanel() {
   // a larger window must not overflow after a window resize).
   const effWidth = Math.min(Math.max(sidebarWidth, 280), Math.max(280, window.innerWidth - 60));
 
+  const chipPx = chipSize(coarse);
+  const anchored: PanelLayout = panelLayout(placement, chipPx, vp, layoutHeight);
+
   const containerBase = {
     pointerEvents: open ? ("auto" as const) : ("none" as const),
     background: "var(--dsw-alias-bg-base, #1b1b1f)",
-    color: "var(--dsw-alias-text-primary, #ddd)",
+    color: "var(--dsw-alias-label-primary, #ddd)",
     display: "flex",
     flexDirection: "column" as const,
     gap: 8,
@@ -674,12 +880,16 @@ export function BrowserPanel() {
         }
       : {
           ...containerBase,
-          position: "absolute",
-          right: 12,
-          bottom: 12,
+          // Anchored beside the launcher chip (same edge, opening toward the free side), clamped to the
+          // visible viewport; full width on narrow screens.
+          position: "fixed",
+          left: anchored.left,
+          width: anchored.width,
+          ...(anchored.top !== undefined ? { top: anchored.top } : { bottom: anchored.bottom }),
           zIndex: 30,
-          maxWidth: 420,
-          maxHeight: "70vh",
+          boxSizing: "border-box",
+          overflow: "auto",
+          maxHeight: anchored.maxHeight,
           border: "1px solid var(--dsw-alias-border-l2, #333)",
           borderRadius: 12,
           padding: 10,
@@ -694,17 +904,7 @@ export function BrowserPanel() {
       // otherwise inherit into every control — the pill included.
       style: { display: "flex", alignItems: "center", gap: 6, minHeight: 24, pointerEvents: "auto" },
     },
-    mode === "sidebar"
-      ? createElement("strong", { style: { fontSize: 12, whiteSpace: "nowrap" } }, "🖥 Browser")
-      : createElement(
-          "button",
-          {
-            onClick: () => applyMode(open ? "chip" : "float"),
-            style: { cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" },
-            title: open ? "Collapse the browser panel" : "Toggle the live browser panel",
-          },
-          "🖥 Browser" + (names.length > 0 ? " (" + names.length + ")" : ""),
-        ),
+    createElement("strong", { style: { fontSize: 12, whiteSpace: "nowrap" } }, "🖥 Browser"),
     open && names.length > 0
       ? createElement(SessionTabs, {
           names,
@@ -730,12 +930,10 @@ export function BrowserPanel() {
       : null,
   );
 
-  return createElement(
+  const panel = createElement(
     "div",
     {
-      ref: rootRef,
-      "data-browser-panel": open ? "open" : "closed",
-      "data-browser-mode": mode,
+      "data-browser-float": mode === "float" ? "1" : undefined,
       style: containerStyle,
     },
     mode === "sidebar"
@@ -767,6 +965,34 @@ export function BrowserPanel() {
             fill: mode === "sidebar",
             onTabs: setBTabs,
           })
+      : null,
+  );
+
+  // The root is a zero-size, click-through wrapper (it only anchors the overlay lookup above); the chip
+  // and the float card are position:fixed children, the sidebar is absolute within the overlay layer.
+  return createElement(
+    "div",
+    {
+      ref: rootRef,
+      "data-browser-panel": open ? "open" : "closed",
+      "data-browser-mode": mode,
+      style: { pointerEvents: "none" },
+    },
+    mode !== "chip" ? panel : null,
+    mode !== "sidebar"
+      ? createElement(LauncherChip, {
+          count: names.length,
+          open,
+          size: chipPx,
+          placement,
+          vp,
+          layoutHeight,
+          onToggle: () => applyMode(open ? "chip" : "float"),
+          onPlace: (next: ChipPlacement) => {
+            setPlacement(next);
+            savePlacement(next);
+          },
+        })
       : null,
   );
 }
